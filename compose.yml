@@ -1,0 +1,31 @@
+services:
+  appliance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/mitchins/comfyui-junior:latest
+    container_name: comfyui-junior
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - COMFY_HOST=127.0.0.1
+      - COMFY_PORT=8188
+      - COMFY_MEMORY_CAP_GIB=10.0
+      - MODEL_DIR=/models
+      - DATA_DIR=/data
+      - SAFETY_ENABLED=1
+      - SAFETY_DEVICE=cuda:0
+      - SAFETY_MODEL_PATH=/models/safety/v7_distilbert
+    volumes:
+      - ./models:/models
+      - ./data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

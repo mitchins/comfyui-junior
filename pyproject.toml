@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comfyui-junior"
+version = "0.1.0"
+description = "Opinionated, high-speed, safe image generation appliance powered by FLUX.2 Klein and Blackwell NVFP4"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Mitchell Currie", email = "mitch@mitchellcurrie.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.0.0",
+    "torch>=2.4.0",
+    "transformers>=4.40.0",
+    "safetensors>=0.4.0",
+    "pillow>=10.0.0",
+    "huggingface-hub>=0.20.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0"
+]
+
+[project.scripts]
+comfyui-junior = "comfyui_junior.launcher:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+comfyui_junior = [
+    "static/*",
+    "static/vendor/*",
+    "workflows/*.json"
+]

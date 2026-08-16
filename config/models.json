@@ -1,0 +1,69 @@
+{
+  "version": "1.0",
+  "models": [
+    {
+      "id": "flux2-klein-4b-nvfp4",
+      "type": "diffusion_model",
+      "filename": "flux-2-klein-4b-nvfp4.safetensors",
+      "subfolder": "diffusion_models",
+      "size_bytes": 2460413488,
+      "sha256": "d8c5007b6a3bbbdfd38538bbcef5101a55dfde81894f58d2e3c8701cdef3542b",
+      "hf_repo": "black-forest-labs/FLUX.2-klein-4b-nvfp4",
+      "hf_filename": "flux-2-klein-4b-nvfp4.safetensors",
+      "revision": "1db2b2f776c24b76f1122e5f69ab1949fc620068",
+      "optional": false
+    },
+    {
+      "id": "qwen3-4b-fp4-flux2",
+      "type": "text_encoder",
+      "filename": "qwen_3_4b_fp4_flux2.safetensors",
+      "subfolder": "text_encoders",
+      "size_bytes": 3848213998,
+      "sha256": "3eab03a77adb0ee5304a4e677d5c10ac22f9049c1d7c894adca4f8bb39206ca8",
+      "hf_repo": "Comfy-Org/vae-text-encorder-for-flux-klein-4b",
+      "hf_filename": "split_files/text_encoders/qwen_3_4b_fp4_flux2.safetensors",
+      "revision": "c6ffb44d9b43b6a635fded0c5723173c4bcca257",
+      "optional": false
+    },
+    {
+      "id": "flux2-vae",
+      "type": "vae",
+      "filename": "flux2-vae.safetensors",
+      "subfolder": "vae",
+      "size_bytes": 336211292,
+      "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+      "hf_repo": "black-forest-labs/FLUX.2-dev",
+      "hf_filename": "ae.safetensors",
+      "revision": "26afe3a78bb242c0a8bb181dcc8937bb16e5c66c",
+      "optional": false
+    },
+    {
+      "id": "junior-safety-v7",
+      "type": "safety_classifier",
+      "filename": "v7_distilbert",
+      "subfolder": "safety",
+      "files": [
+        "config.json",
+        "heads.pt",
+        "model.safetensors",
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "vocab.txt",
+        "special_tokens_map.json"
+      ],
+      "file_digests": {
+        "config.json": "38bf07e64f517389a4103925c4304f98deebb3107035374d7d16d16d0a0aae2c",
+        "heads.pt": "5854a76b6fd761ec623cf5dd2e161d41cdff70ca7ec0806f94b03e5d4bb7a2d1",
+        "model.safetensors": "ccfdaab81bf5f92688ee04143e3245000f6a3ea69d9db93ba5086d4ee30228db",
+        "special_tokens_map.json": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3",
+        "tokenizer_config.json": "a3c9410f27554c6e26af779fd147e536c6c5f9e5cb0e6b8f38ddaa25e1b0f6af",
+        "tokenizer.json": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        "vocab.txt": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+      },
+      "hf_repo": "Mitchins/comfyui-junior-safety",
+      "revision": "8969dc6b8f479b2048df5ca11290b22651903a51",
+      "sha256": null,
+      "optional": false
+    }
+  ]
+}

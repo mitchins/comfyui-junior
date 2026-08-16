@@ -1,0 +1,44 @@
+.git
+.github
+.gitignore
+.dockerignore
+.env
+.env.*
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+build/
+dist/
+*.egg-info
+.venv
+venv/
+env/
+
+# Model weights & binary files
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.onnx
+*.gguf
+models/
+checkpoints/
+
+# Generated outputs
+*.png
+*.jpg
+*.jpeg
+*.webp
+output/
+benchmark_results/
+
+# OS/Editor
+.DS_Store
+._*
+.idea
+.vscode
