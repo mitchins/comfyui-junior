@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Imagine — Safe Image Studio</title>
+  <meta name="description" content="Simple, safe, high-speed local image generation appliance powered by FLUX.2 Klein and Blackwell NVFP4.">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+  <script src="/static/vendor/alpine.min.js" defer></script>
+</head>
+<body>
+
+  <div class="container" x-data="imagineApp" x-cloak>
+    
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-icon">✨</span>
+        <h1 class="brand-title">Imagine</h1>
+      </div>
+      <div class="badge-model">
+        FLUX.2 Safe
+      </div>
+    </header>
+
+    <!-- Main Creation Card -->
+    <main class="card">
+      
+      <!-- Aspect & Quality Options -->
+      <div class="options-row">
+        <!-- Aspect Ratio -->
+        <div class="pill-group" role="group" aria-label="Aspect ratio selection">
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :class="{ 'active': aspect === 'portrait' }" 
+            @click="aspect = 'portrait'"
+            id="aspect-portrait">
+            Portrait
+          </button>
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :class="{ 'active': aspect === 'square' }" 
+            @click="aspect = 'square'"
+            id="aspect-square">
+            Square
+          </button>
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :class="{ 'active': aspect === 'landscape' }" 
+            @click="aspect = 'landscape'"
+            id="aspect-landscape">
+            Landscape
+          </button>
+        </div>
+
+        <!-- Quality Level -->
+        <div class="pill-group" role="group" aria-label="Quality selection">
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :class="{ 'active': quality === 'normal' }" 
+            @click="quality = 'normal'"
+            id="quality-normal">
+            Normal
+          </button>
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :class="{ 'active': quality === 'high' }" 
+            @click="quality = 'high'"
+            id="quality-high">
+            High
+          </button>
+        </div>
+      </div>
+
+      <!-- Prompt Input -->
+      <div class="prompt-container">
+        <textarea
+          id="prompt-input"
+          class="prompt-textarea"
+          rows="3"
+          maxlength="1500"
+          placeholder="Describe your picture... (e.g. A cute penguin under a starry vortex sky)"
+          x-model="prompt"
+          @keydown="handleKeydown($event)"
+          :disabled="isGenerating"
+          aria-label="Image prompt"
+        ></textarea>
+
+        <div class="prompt-meta">
+          <span class="keyboard-hint" x-show="!isGenerating">Tip: Press ⌘/Ctrl + Enter to create</span>
+          <span class="keyboard-hint" x-show="isGenerating" style="color: var(--color-primary); font-weight: 600;">Creating...</span>
+          <span x-text="`${prompt.length}/1500`"></span>
+        </div>
+      </div>
+
+      <!-- Action Button -->
+      <div class="action-bar">
+        <button
+          type="button"
+          class="btn-primary"
+          id="btn-create"
+          @click="generate()"
+          :disabled="isGenerating || !prompt.trim()"
+          aria-label="Create picture"
+        >
+          <template x-if="!isGenerating">
+            <span>Create ✨</span>
+          </template>
+          <template x-if="isGenerating">
+            <span>Creating...</span>
+          </template>
+        </button>
+      </div>
+
+      <!-- Error State Alert -->
+      <div class="error-banner" x-show="errorMessage" role="alert">
+        <div class="error-header">
+          <span>💡</span>
+          <span x-text="errorMessage"></span>
+        </div>
+        <template x-if="errorDetails">
+          <div>
+            <button 
+              type="button" 
+              class="error-details-btn" 
+              @click="showErrorDetails = !showErrorDetails"
+              x-text="showErrorDetails ? 'Hide details' : 'Show details'"
+            ></button>
+            <div class="error-details-box" x-show="showErrorDetails" x-text="errorDetails"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Image Canvas Stage -->
+      <section class="canvas-wrapper" aria-label="Generated picture display">
+        
+        <!-- Loading State -->
+        <div class="loading-box" x-show="isGenerating">
+          <div class="shimmer-spinner"></div>
+          <div class="loading-text">Creating your picture ✨</div>
+          <div class="loading-subtext">Usually takes ~3.5 seconds</div>
+        </div>
+
+        <!-- Result Image -->
+        <template x-if="!isGenerating && currentImage && currentImage.blobUrl">
+          <img 
+            :src="currentImage.blobUrl" 
+            :alt="currentImage.prompt || 'Generated picture'" 
+            class="canvas-image"
+            id="main-display-image"
+          />
+        </template>
+
+        <!-- Empty Placeholder -->
+        <div class="canvas-placeholder" x-show="!isGenerating && (!currentImage || !currentImage.blobUrl)">
+          <div class="placeholder-icon">🎨</div>
+          <div>Type an idea above and tap <strong>Create ✨</strong> to see it come to life!</div>
+        </div>
+
+      </section>
+
+      <!-- Post-Generation Toolbar -->
+      <div class="image-toolbar" x-show="!isGenerating && currentImage && currentImage.blobUrl">
+        <div class="image-actions">
+          <button 
+            type="button" 
+            class="btn-secondary" 
+            id="btn-download"
+            @click="downloadImage()"
+            title="Download PNG image"
+          >
+            <span>⬇️ Download</span>
+          </button>
+          
+          <button 
+            type="button" 
+            class="btn-secondary" 
+            id="btn-make-another"
+            @click="makeAnother()"
+            title="Generate again with same prompt"
+          >
+            <span>🔄 Make another</span>
+          </button>
+
+          <button 
+            type="button" 
+            class="btn-secondary" 
+            id="btn-edit-prompt"
+            @click="editPrompt()"
+            title="Focus prompt editor"
+          >
+            <span>✏️ Edit prompt</span>
+          </button>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Recent Images Strip -->
+    <section class="recent-section" x-show="recentList.length > 0" aria-label="Recent pictures">
+      <div class="recent-header">
+        <h2 class="recent-title">Recent Pictures</h2>
+        <span class="recent-count" x-text="`${recentList.length} saved`"></span>
+      </div>
+
+      <div class="recent-grid">
+        <template x-for="item in recentList" :key="item.id">
+          <div 
+            class="thumb-card" 
+            :class="{ 'active': currentImage && currentImage.id === item.id }"
+            @click="selectRecent(item)"
+            :title="item.prompt"
+            role="button"
+            tabindex="0"
+            @keydown.enter="selectRecent(item)"
+          >
+            <img :src="item.blobUrl" :alt="item.prompt" class="thumb-img" loading="lazy" />
+            <span class="thumb-badge" x-text="item.aspect ? item.aspect.charAt(0).toUpperCase() : 'S'"></span>
+          </div>
+        </template>
+      </div>
+    </section>
+
+  </div>
+
+</body>
+</html>

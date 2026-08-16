@@ -1,0 +1,52 @@
+{
+  "version": "1.0",
+  "models": [
+    {
+      "id": "flux2-klein-4b-nvfp4",
+      "type": "diffusion_model",
+      "filename": "flux-2-klein-4b-nvfp4.safetensors",
+      "subfolder": "diffusion_models",
+      "size_bytes": 2641400640,
+      "hf_repo": "black-forest-labs/FLUX.2-klein-4b-nvfp4",
+      "hf_filename": "flux-2-klein-4b-nvfp4.safetensors",
+      "optional": false
+    },
+    {
+      "id": "qwen3-4b-fp4-flux2",
+      "type": "text_encoder",
+      "filename": "qwen_3_4b_fp4_flux2.safetensors",
+      "subfolder": "text_encoders",
+      "size_bytes": 4133454720,
+      "hf_repo": "Comfy-Org/flux2-assets",
+      "hf_filename": "qwen_3_4b_fp4_flux2.safetensors",
+      "optional": false
+    },
+    {
+      "id": "flux2-vae",
+      "type": "vae",
+      "filename": "flux2-vae.safetensors",
+      "subfolder": "vae",
+      "size_bytes": 354330144,
+      "hf_repo": "black-forest-labs/FLUX.2-dev",
+      "hf_filename": "flux2-vae.safetensors",
+      "optional": false
+    },
+    {
+      "id": "junior-safety-v7",
+      "type": "safety_classifier",
+      "filename": "v7_distilbert",
+      "subfolder": "safety",
+      "files": [
+        "config.json",
+        "heads.pt",
+        "model.safetensors",
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "vocab.txt",
+        "special_tokens_map.json"
+      ],
+      "hf_repo": "mitchins/comfyui-junior-safety",
+      "optional": true
+    }
+  ]
+}
