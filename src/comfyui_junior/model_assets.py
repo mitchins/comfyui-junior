@@ -68,8 +68,9 @@ def ensure_model_assets(
         # Allow override of safety model remote settings
         if model_type == "safety_classifier":
             if safety_hf_repo:
+                if not safety_hf_revision:
+                    raise ValueError("SAFETY_HF_REVISION must be specified with an immutable commit SHA when SAFETY_HF_REPO is configured.")
                 hf_repo = safety_hf_repo
-            if safety_hf_revision:
                 revision = safety_hf_revision
 
         target_dir = model_dir / subfolder
@@ -109,13 +110,18 @@ def ensure_model_assets(
                 from huggingface_hub import hf_hub_download, snapshot_download
 
                 if "files" in model_info:
-                    # Directory download
+                    # Directory download with explicit pattern whitelist
                     snapshot_download(
                         repo_id=hf_repo,
                         revision=revision or None,
                         local_dir=str(target_file),
+                        allow_patterns=model_info.get("files"),
                         token=hf_token or None
                     )
+                    # Verify all expected files are present
+                    for req_file in model_info.get("files", []):
+                        if not (target_file / req_file).exists():
+                            raise FileNotFoundError(f"Downloaded model '{model_id}' missing expected file '{req_file}' in {target_file}")
                 else:
                     # Single file download
                     downloaded_path = hf_hub_download(
@@ -149,11 +155,19 @@ def ensure_model_assets(
             comfy_subfolder = comfy_models_root / subfolder
             comfy_subfolder.mkdir(parents=True, exist_ok=True)
             comfy_target = comfy_subfolder / filename
-            if not comfy_target.exists():
+            if comfy_target.is_symlink():
+                try:
+                    if comfy_target.resolve() != target_file.resolve():
+                        comfy_target.unlink()
+                        comfy_target.symlink_to(target_file)
+                        logger.debug("Updated stale symlink: %s -> %s", comfy_target, target_file)
+                except Exception as sym_err:
+                    logger.warning("Failed to update symlink %s -> %s: %s", comfy_target, target_file, sym_err)
+            elif not comfy_target.exists():
                 try:
                     comfy_target.symlink_to(target_file)
                     logger.debug("Created symlink: %s -> %s", comfy_target, target_file)
                 except Exception as sym_err:
-                    logger.debug("Symlink creation skipped: %s", sym_err)
+                    logger.warning("Symlink creation failed for %s -> %s: %s", comfy_target, target_file, sym_err)
 
     return results

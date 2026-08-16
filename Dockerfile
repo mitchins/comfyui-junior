@@ -33,22 +33,22 @@ RUN python3.10 -m venv /opt/venv && \
 RUN pip install --no-cache-dir \
     torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
 
-# Install comfy-kitchen and core ML dependencies (quoted version specifiers to prevent shell redirection)
+# Install comfy-kitchen and core ML dependencies (exact pinned versions)
 RUN pip install --no-cache-dir \
     comfy-kitchen==0.2.31 \
-    "transformers>=4.40.0" \
-    "safetensors>=0.4.0" \
-    "pynvml>=11.5.0" \
-    "fastapi>=0.115.0" \
-    "uvicorn[standard]>=0.30.0" \
-    "pydantic>=2.0.0" \
-    "pillow>=10.0.0" \
-    "huggingface-hub>=0.20.0" \
-    "torchsde>=0.2.6" \
-    "einops>=0.8.0" \
-    "spandrel>=0.4.0" \
-    "scipy>=1.11.0" \
-    "timm>=1.0.0"
+    transformers==5.15.0 \
+    safetensors==0.8.0 \
+    pynvml==13.0.1 \
+    fastapi==0.141.1 \
+    "uvicorn[standard]==0.52.3" \
+    pydantic==2.13.4 \
+    pillow==12.3.0 \
+    huggingface-hub==1.27.0 \
+    torchsde==0.2.6 \
+    einops==0.8.2 \
+    spandrel==0.4.2 \
+    scipy==1.15.3 \
+    timm==1.0.28
 
 # Clone pinned upstream ComfyUI (zero custom nodes, internal only)
 WORKDIR /app
@@ -64,10 +64,14 @@ COPY config/ /app/config/
 COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps -e .
 
-# Create volume mount points
-RUN mkdir -p /models /data
+# Create volume mount points and unprivileged runtime user
+RUN groupadd -g 1000 junior && \
+    useradd -u 1000 -g junior -m -s /bin/bash junior && \
+    mkdir -p /models /data /app && \
+    chown -R junior:junior /app /models /data /opt/venv
 
 WORKDIR /app
+USER junior
 EXPOSE 8000
 
 ENTRYPOINT ["tini", "--", "comfyui-junior"]

@@ -20,9 +20,9 @@
       "subfolder": "text_encoders",
       "size_bytes": 3848213998,
       "sha256": "3eab03a77adb0ee5304a4e677d5c10ac22f9049c1d7c894adca4f8bb39206ca8",
-      "hf_repo": "Comfy-Org/flux2-assets",
-      "hf_filename": "qwen_3_4b_fp4_flux2.safetensors",
-      "revision": "main",
+      "hf_repo": "Comfy-Org/vae-text-encorder-for-flux-klein-4b",
+      "hf_filename": "split_files/text_encoders/qwen_3_4b_fp4_flux2.safetensors",
+      "revision": "c6ffb44d9b43b6a635fded0c5723173c4bcca257",
       "optional": false
     },
     {

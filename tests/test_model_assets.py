@@ -43,13 +43,26 @@ class TestModelAssets(unittest.TestCase):
             f.write(b"ComfyUI Junior Test Content")
             temp_path = Path(f.name)
         try:
-            expected_digest = "e95dc017a4282315b9c5bb02e21b71c080bbcf964042898a3952dc66bfd31e9c"
-            # calculate actual
+            expected_digest = "de911f001d77f932396d3ad554003c9d2068a1f6dded1be5b34cefbd8b39c5db"
             actual = calculate_sha256(temp_path)
-            self.assertTrue(verify_file_sha256(temp_path, actual))
+            self.assertEqual(actual, expected_digest)
+            self.assertTrue(verify_file_sha256(temp_path, expected_digest))
             self.assertFalse(verify_file_sha256(temp_path, "0000000000000000000000000000000000000000000000000000000000000000"))
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def test_safety_hf_revision_required(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_dir = Path(tmp_dir) / "models"
+            comfy_dir = Path(tmp_dir) / "comfy"
+            with self.assertRaises(ValueError):
+                ensure_model_assets(
+                    model_dir=model_dir,
+                    comfy_dir=comfy_dir,
+                    safety_hf_repo="mitchins/comfyui-junior-safety",
+                    safety_hf_revision=None,
+                    dry_run=True
+                )
 
 class TestComfyNodeResolution(unittest.TestCase):
     def test_find_unique_node_success(self):

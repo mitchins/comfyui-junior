@@ -49,15 +49,20 @@ Model weights are external data assets downloaded at runtime to persistent stora
 - **Attribution Note:** This uses the official Black Forest Labs NVFP4 release (not Kizuna's separate Flux2-klein-Lite GPTQ INT4 project).
 
 ### Qwen3-4B FP4 Flux2 Text Encoder
-- **Provider:** Comfy-Org / Alibaba Cloud Qwen Team ([Comfy-Org/flux2-assets](https://huggingface.co/Comfy-Org/flux2-assets))
+- **Provider:** Comfy-Org / Alibaba Cloud Qwen Team ([Comfy-Org/vae-text-encorder-for-flux-klein-4b](https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b))
 - **Format:** FP4 Safetensors
+- **Pinned Revision:** `c6ffb44d9b43b6a635fded0c5723173c4bcca257`
+- **SHA-256:** `3eab03a77adb0ee5304a4e677d5c10ac22f9049c1d7c894adca4f8bb39206ca8`
 - **License:** Governed by Qwen Model License agreement.
 
 ### Flux2 VAE
 - **Provider:** Black Forest Labs ([black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev))
 - **Format:** Float16 / Bfloat16 AutoencoderKL
+- **Pinned Revision:** `26afe3a78bb242c0a8bb181dcc8937bb16e5c66c`
+- **SHA-256:** `868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3`
 - **License:** Governed by Black Forest Labs FLUX.2 License agreement.
 
 ### v7 DistilBERT Prompt Safety Classifier
-- **Base Architecture:** DistilBERT (`distilbert-base-uncased`, Apache 2.0)
-- **Safety Heads:** Custom continuous multi-width regression heads for child safety (~12yo appliance)
+- **Base Architecture:** DistilBERT (`distilbert-base-uncased`, Apache-2.0 License)
+- **Safety Heads:** Custom continuous multi-width regression heads for child safety (~12yo appliance).
+- **Distribution Policy:** Default operation mounts local weights (`/models/safety/v7_distilbert`). The remote Hugging Face repository (`mitchins/comfyui-junior-safety`) remains an optional placeholder and will be locked to an immutable commit SHA upon official release.
