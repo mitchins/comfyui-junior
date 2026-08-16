@@ -29,33 +29,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3.10 -m venv /opt/venv && \
     pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch with Blackwell / CUDA 13.0 support (exact pinned cu130 wheel, no fail-open fallback)
+# Copy and install complete locked dependency graph (including torch cu130, ComfyUI, and Junior deps)
+WORKDIR /app
+COPY docker/constraints.txt /app/constraints.txt
 RUN pip install --no-cache-dir \
-    torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
-
-# Install comfy-kitchen and core ML dependencies (exact pinned versions)
-RUN pip install --no-cache-dir \
-    comfy-kitchen==0.2.31 \
-    transformers==5.15.0 \
-    safetensors==0.8.0 \
-    pynvml==13.0.1 \
-    fastapi==0.141.1 \
-    "uvicorn[standard]==0.52.3" \
-    pydantic==2.13.4 \
-    pillow==12.3.0 \
-    huggingface-hub==1.27.0 \
-    torchsde==0.2.6 \
-    einops==0.8.2 \
-    spandrel==0.4.2 \
-    scipy==1.15.3 \
-    timm==1.0.28
+    --extra-index-url https://download.pytorch.org/whl/cu130 \
+    -r /app/constraints.txt
 
 # Clone pinned upstream ComfyUI (zero custom nodes, internal only)
-WORKDIR /app
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /app/ComfyUI && \
     cd /app/ComfyUI && \
-    git checkout 7fe8a6138504f90ff7be82f3babf416da32876b1 && \
-    pip install --no-cache-dir -r requirements.txt
+    git checkout 7fe8a6138504f90ff7be82f3babf416da32876b1
 
 # Copy and install ComfyUI Junior package
 WORKDIR /app/comfyui-junior

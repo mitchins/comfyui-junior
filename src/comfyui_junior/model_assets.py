@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import shutil
 import logging
 import hashlib
 from pathlib import Path
@@ -19,6 +21,27 @@ def verify_file_sha256(filepath: Path, expected_sha256: str) -> bool:
     if digest.lower() != expected_sha256.lower():
         logger.error("SHA256 mismatch for %s: expected %s, got %s", filepath, expected_sha256, digest)
         return False
+    return True
+
+def verify_directory_assets(
+    dir_path: Path,
+    expected_files: List[str],
+    file_digests: Optional[Dict[str, str]] = None,
+    verify_hashes: bool = False
+) -> bool:
+    if not dir_path.is_dir():
+        logger.error("Expected directory at %s but found non-directory", dir_path)
+        return False
+    for rel_file in expected_files:
+        fpath = dir_path / rel_file
+        if not fpath.is_file() or fpath.stat().st_size == 0:
+            logger.error("Directory asset %s missing expected file %s", dir_path, rel_file)
+            return False
+        if verify_hashes and file_digests and rel_file in file_digests:
+            expected_digest = file_digests[rel_file]
+            if not verify_file_sha256(fpath, expected_digest):
+                logger.error("File %s in %s failed digest verification", rel_file, dir_path)
+                return False
     return True
 
 def load_manifest(manifest_path: Optional[Path] = None) -> Dict[str, Any]:
@@ -63,13 +86,17 @@ def ensure_model_assets(
         hf_filename = model_info.get("hf_filename")
         revision = model_info.get("revision")
         expected_sha256 = model_info.get("sha256")
+        expected_files = model_info.get("files")
+        file_digests = model_info.get("file_digests")
         is_optional = model_info.get("optional", False)
 
         # Allow override of safety model remote settings
         if model_type == "safety_classifier":
             if safety_hf_repo:
-                if not safety_hf_revision:
-                    raise ValueError("SAFETY_HF_REVISION must be specified with an immutable commit SHA when SAFETY_HF_REPO is configured.")
+                if not safety_hf_revision or not re.fullmatch(r"[0-9a-fA-F]{40}", safety_hf_revision):
+                    raise ValueError(
+                        f"SAFETY_HF_REVISION must be an immutable 40-character hexadecimal commit SHA when SAFETY_HF_REPO is configured; got {safety_hf_revision!r}"
+                    )
                 hf_repo = safety_hf_repo
                 revision = safety_hf_revision
 
@@ -85,13 +112,22 @@ def ensure_model_assets(
                 continue
 
         # Check if model already exists
-        if target_file.exists() and (target_file.is_dir() or target_file.stat().st_size > 0):
-            if verify_hashes and expected_sha256 and target_file.is_file():
-                if not verify_file_sha256(target_file, expected_sha256):
-                    raise ValueError(f"Integrity check failed for existing model '{model_id}' at {target_file}")
-            logger.info("Model '%s' already present at %s", model_id, target_file)
-            results[model_id] = True
-        else:
+        if target_file.exists():
+            if target_file.is_dir() and expected_files:
+                if verify_directory_assets(target_file, expected_files, file_digests, verify_hashes=verify_hashes):
+                    logger.info("Model directory '%s' valid at %s", model_id, target_file)
+                    results[model_id] = True
+                else:
+                    logger.warning("Directory model '%s' at %s failed integrity checks; removing stale directory.", model_id, target_file)
+                    shutil.rmtree(target_file, ignore_errors=True)
+            elif target_file.is_file() and target_file.stat().st_size > 0:
+                if verify_hashes and expected_sha256:
+                    if not verify_file_sha256(target_file, expected_sha256):
+                        raise ValueError(f"Integrity check failed for existing model '{model_id}' at {target_file}")
+                logger.info("Model '%s' already present at %s", model_id, target_file)
+                results[model_id] = True
+
+        if not results.get(model_id, False):
             if dry_run:
                 logger.info("[Dry Run] Model '%s' would be downloaded from %s (revision: %s)", model_id, hf_repo, revision)
                 results[model_id] = False
@@ -109,19 +145,19 @@ def ensure_model_assets(
             try:
                 from huggingface_hub import hf_hub_download, snapshot_download
 
-                if "files" in model_info:
+                if expected_files:
                     # Directory download with explicit pattern whitelist
                     snapshot_download(
                         repo_id=hf_repo,
                         revision=revision or None,
                         local_dir=str(target_file),
-                        allow_patterns=model_info.get("files"),
+                        allow_patterns=expected_files,
                         token=hf_token or None
                     )
-                    # Verify all expected files are present
-                    for req_file in model_info.get("files", []):
-                        if not (target_file / req_file).exists():
-                            raise FileNotFoundError(f"Downloaded model '{model_id}' missing expected file '{req_file}' in {target_file}")
+                    # Verify all expected files and digests are present
+                    if not verify_directory_assets(target_file, expected_files, file_digests, verify_hashes=True):
+                        shutil.rmtree(target_file, ignore_errors=True)
+                        raise ValueError(f"Downloaded directory model '{model_id}' failed integrity validation at {target_file}")
                 else:
                     # Single file download
                     downloaded_path = hf_hub_download(
@@ -132,7 +168,6 @@ def ensure_model_assets(
                     )
                     # Move/copy to target
                     if not target_file.exists():
-                        import shutil
                         shutil.copy2(downloaded_path, target_file)
 
                     if expected_sha256:

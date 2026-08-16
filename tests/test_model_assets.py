@@ -51,10 +51,12 @@ class TestModelAssets(unittest.TestCase):
         finally:
             temp_path.unlink(missing_ok=True)
 
-    def test_safety_hf_revision_required(self):
+    def test_safety_hf_revision_required_and_hex40(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             model_dir = Path(tmp_dir) / "models"
             comfy_dir = Path(tmp_dir) / "comfy"
+            
+            # Reject None / missing revision
             with self.assertRaises(ValueError):
                 ensure_model_assets(
                     model_dir=model_dir,
@@ -63,6 +65,68 @@ class TestModelAssets(unittest.TestCase):
                     safety_hf_revision=None,
                     dry_run=True
                 )
+
+            # Reject branch names
+            for branch in ["main", "master", "dev", "feature/safety"]:
+                with self.assertRaises(ValueError):
+                    ensure_model_assets(
+                        model_dir=model_dir,
+                        comfy_dir=comfy_dir,
+                        safety_hf_repo="mitchins/comfyui-junior-safety",
+                        safety_hf_revision=branch,
+                        dry_run=True
+                    )
+
+            # Reject tags and short SHAs
+            for tag in ["v1.0", "release-1.0.0", "1a2b3c", "0123456789abcdef"]:
+                with self.assertRaises(ValueError):
+                    ensure_model_assets(
+                        model_dir=model_dir,
+                        comfy_dir=comfy_dir,
+                        safety_hf_repo="mitchins/comfyui-junior-safety",
+                        safety_hf_revision=tag,
+                        dry_run=True
+                    )
+
+            # Accept valid 40-character commit SHA
+            valid_sha = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+            res = ensure_model_assets(
+                model_dir=model_dir,
+                comfy_dir=comfy_dir,
+                safety_hf_repo="mitchins/comfyui-junior-safety",
+                safety_hf_revision=valid_sha,
+                dry_run=True
+            )
+            self.assertIn("junior-safety-v7", res)
+
+    def test_directory_asset_verification(self):
+        from comfyui_junior.model_assets import verify_directory_assets
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dir_path = Path(tmp_dir) / "model_dir"
+            dir_path.mkdir()
+            
+            file1 = dir_path / "file1.txt"
+            file2 = dir_path / "file2.txt"
+            file1.write_bytes(b"hello world")
+            file2.write_bytes(b"comfy junior")
+
+            expected_files = ["file1.txt", "file2.txt"]
+            file_digests = {
+                "file1.txt": calculate_sha256(file1),
+                "file2.txt": calculate_sha256(file2)
+            }
+
+            # Valid directory
+            self.assertTrue(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=True))
+
+            # Missing file
+            self.assertTrue(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=False))
+            file2.unlink()
+            self.assertFalse(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=False))
+
+            # Corrupted digest
+            file2.write_bytes(b"corrupted content")
+            self.assertFalse(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=True))
 
 class TestComfyNodeResolution(unittest.TestCase):
     def test_find_unique_node_success(self):

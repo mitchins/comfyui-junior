@@ -51,6 +51,15 @@
         "vocab.txt",
         "special_tokens_map.json"
       ],
+      "file_digests": {
+        "config.json": "38bf07e64f517389a4103925c4304f98deebb3107035374d7d16d16d0a0aae2c",
+        "heads.pt": "5854a76b6fd761ec623cf5dd2e161d41cdff70ca7ec0806f94b03e5d4bb7a2d1",
+        "model.safetensors": "ccfdaab81bf5f92688ee04143e3245000f6a3ea69d9db93ba5086d4ee30228db",
+        "special_tokens_map.json": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3",
+        "tokenizer_config.json": "a3c9410f27554c6e26af779fd147e536c6c5f9e5cb0e6b8f38ddaa25e1b0f6af",
+        "tokenizer.json": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        "vocab.txt": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+      },
       "hf_repo": "mitchins/comfyui-junior-safety",
       "revision": null,
       "sha256": null,
