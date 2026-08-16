@@ -1,5 +1,4 @@
-# syntax=docker/dockerfile:1
-FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04
 
 LABEL org.opencontainers.image.title="ComfyUI Junior" \
       org.opencontainers.image.description="Opinionated image-generation appliance powered by FLUX.2 Klein and Blackwell NVFP4" \
@@ -30,27 +29,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3.10 -m venv /opt/venv && \
     pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch with Blackwell / CUDA support
+# Install PyTorch with Blackwell / CUDA 13.0 support (exact pinned cu130 wheel, no fail-open fallback)
 RUN pip install --no-cache-dir \
-    torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128 \
-    || pip install --no-cache-dir torch torchvision torchaudio
+    torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
 
-# Install comfy-kitchen and core ML dependencies
+# Install comfy-kitchen and core ML dependencies (quoted version specifiers to prevent shell redirection)
 RUN pip install --no-cache-dir \
     comfy-kitchen==0.2.31 \
-    transformers>=4.40.0 \
-    safetensors>=0.4.0 \
-    pynvml>=11.5.0 \
-    fastapi>=0.115.0 \
-    uvicorn[standard]>=0.30.0 \
-    pydantic>=2.0.0 \
-    pillow>=10.0.0 \
-    huggingface-hub>=0.20.0 \
-    torchsde>=0.2.6 \
-    einops>=0.8.0 \
-    spandrel>=0.4.0 \
-    scipy>=1.11.0 \
-    timm>=1.0.0
+    "transformers>=4.40.0" \
+    "safetensors>=0.4.0" \
+    "pynvml>=11.5.0" \
+    "fastapi>=0.115.0" \
+    "uvicorn[standard]>=0.30.0" \
+    "pydantic>=2.0.0" \
+    "pillow>=10.0.0" \
+    "huggingface-hub>=0.20.0" \
+    "torchsde>=0.2.6" \
+    "einops>=0.8.0" \
+    "spandrel>=0.4.0" \
+    "scipy>=1.11.0" \
+    "timm>=1.0.0"
 
 # Clone pinned upstream ComfyUI (zero custom nodes, internal only)
 WORKDIR /app

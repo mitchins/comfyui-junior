@@ -3,6 +3,7 @@ import sys
 import time
 import signal
 import logging
+import threading
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -19,11 +20,11 @@ logger = logging.getLogger("comfyui_junior.launcher")
 
 def check_hardware_environment():
     """
-    Validates that a supported NVIDIA GPU is present and checks for Blackwell SM120.
+    Validates that a supported NVIDIA Blackwell GPU (SM120) is present.
+    Enforces the v1 hardware contract.
     """
     if not torch.cuda.is_available():
-        logger.warning("[GPU Check] No CUDA GPU detected. Appliance requires an NVIDIA Blackwell GPU for NVFP4 execution.")
-        return False
+        raise RuntimeError("[Hardware Check Failed] No CUDA GPU detected. Appliance requires an NVIDIA Blackwell GPU (SM120, CC 12.0) for native NVFP4 execution.")
         
     device_name = torch.cuda.get_device_name(0)
     major, minor = torch.cuda.get_device_capability(0)
@@ -31,16 +32,12 @@ def check_hardware_environment():
     
     logger.info("Detected GPU: %s (Compute Capability: %d.%d, Total VRAM: %.2f GB)", device_name, major, minor, total_gb)
     
-    if major < 12:
-        logger.warning(
-            "[Hardware Notice] Current GPU compute capability is %d.%d. "
-            "Native NVFP4 (Blackwell express path) is qualified on SM120 (RTX 50-series). "
-            "Execution may fall back or fail on older architectures.",
-            major, minor
+    if major != 12:
+        raise RuntimeError(
+            f"[Hardware Contract Violation] Device compute capability is {major}.{minor}. "
+            "ComfyUI Junior v1 strictly requires an NVIDIA Blackwell SM120 GPU (Compute Capability 12.0) for native NVFP4 express path."
         )
-    else:
-        logger.info("Blackwell SM120 architecture confirmed. Native NVFP4 fast-path active.")
-    return True
+    logger.info("Blackwell SM120 architecture confirmed. Native NVFP4 fast-path active.")
 
 def apply_allocator_cap():
     """
@@ -73,7 +70,7 @@ def main():
     logger.info(" Starting ComfyUI Junior Appliance (v0.1.0)")
     logger.info("==================================================================")
 
-    # 1. Hardware Diagnostic
+    # 1. Enforce Hardware Contract
     check_hardware_environment()
 
     # 2. Model Asset Preparation
@@ -86,10 +83,12 @@ def main():
         model_dir=model_dir,
         comfy_dir=comfy_dir,
         hf_token=settings.HF_TOKEN,
-        safety_model_path=safety_model_path
+        safety_model_path=safety_model_path,
+        safety_hf_repo=settings.SAFETY_HF_REPO,
+        safety_hf_revision=settings.SAFETY_HF_REVISION
     )
 
-    # 3. Apply Caching-Allocator Ceiling in this parent process
+    # 3. Apply Caching-Allocator Ceiling in this supervisor process
     apply_allocator_cap()
 
     # 4. Prepare ComfyUI launcher script that inherits allocator cap
@@ -106,7 +105,7 @@ if torch.cuda.is_available():
 
 sys.path.insert(0, '{settings.COMFY_DIR}')
 os.chdir('{settings.COMFY_DIR}')
-sys.argv = ['main.py', '--listen', '{settings.COMFY_HOST}', '--port', '{settings.COMFY_PORT}', '--disable-auto-launch']
+sys.argv = ['main.py', '--listen', '{settings.COMFY_HOST}', '--port', '{settings.COMFY_PORT}', '--disable-auto-launch', '--disable-all-custom-nodes']
 
 import main
 import app.logger
@@ -130,37 +129,56 @@ finally:
     )
     logger.info("Started internal ComfyUI process (PID: %d)", comfy_proc.pid)
 
-    def shutdown_handler(signum, frame):
-        logger.info("Received termination signal (%d), shutting down child processes...", signum)
-        if comfy_proc.poll() is None:
-            comfy_proc.terminate()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, shutdown_handler)
-    signal.signal(signal.SIGTERM, shutdown_handler)
-
     # 5. Wait for ComfyUI Readiness
     logger.info("Awaiting internal ComfyUI readiness at %s...", settings.comfy_base_url)
-    if not wait_for_comfy_ready(settings.comfy_base_url, timeout_seconds=45.0):
+    if not wait_for_comfy_ready(settings.comfy_base_url, timeout_seconds=120.0):
         logger.error("ComfyUI backend failed to start within timeout.")
         comfy_proc.terminate()
         sys.exit(1)
     logger.info("Internal ComfyUI is ready.")
 
-    # 6. Start Junior FastAPI Proxy
+    # 6. Start Junior FastAPI Proxy with Process Supervision
     import uvicorn
-    logger.info("Starting Junior public service on %s:%d...", settings.HOST, settings.PORT)
-    try:
-        uvicorn.run(
-            "comfyui_junior.app:app",
-            host=settings.HOST,
-            port=settings.PORT,
-            log_level="info"
-        )
-    finally:
+    config = uvicorn.Config(
+        "comfyui_junior.app:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        log_level="info"
+    )
+    server = uvicorn.Server(config)
+
+    def supervise_comfy():
+        while not server.should_exit:
+            ret = comfy_proc.poll()
+            if ret is not None:
+                logger.critical("Internal ComfyUI child process exited unexpectedly (code: %d)! Shutting down Junior...", ret)
+                server.should_exit = True
+                break
+            time.sleep(0.5)
+
+    monitor_thread = threading.Thread(target=supervise_comfy, daemon=True)
+    monitor_thread.start()
+
+    def shutdown_handler(signum, frame):
+        logger.info("Received termination signal (%d), shutting down child processes...", signum)
+        server.should_exit = True
         if comfy_proc.poll() is None:
             comfy_proc.terminate()
-            comfy_proc.wait(timeout=5.0)
+
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+
+    logger.info("Starting Junior public service on %s:%d...", settings.HOST, settings.PORT)
+    try:
+        server.run()
+    finally:
+        if comfy_proc.poll() is None:
+            logger.info("Terminating internal ComfyUI process...")
+            comfy_proc.terminate()
+            try:
+                comfy_proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                comfy_proc.kill()
 
 if __name__ == "__main__":
     main()

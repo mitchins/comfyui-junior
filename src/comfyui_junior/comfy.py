@@ -12,6 +12,21 @@ from typing import Optional, Dict, Any, Tuple
 
 logger = logging.getLogger("comfyui_junior.comfy")
 
+def find_unique_node(workflow: Dict[str, Any], class_type: str, fallback_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+    """
+    Locates a node by class_type if uniquely identifiable in the workflow template.
+    Explicitly detects and raises on missing or ambiguous duplicate matches.
+    """
+    matching = [(nid, n) for nid, n in workflow.items() if isinstance(n, dict) and n.get("class_type") == class_type]
+    if len(matching) == 1:
+        return matching[0]
+    if len(matching) > 1:
+        raise ValueError(f"Ambiguous workflow template: found {len(matching)} nodes of class_type '{class_type}'")
+    if fallback_id and fallback_id in workflow and isinstance(workflow[fallback_id], dict):
+        if workflow[fallback_id].get("class_type") == class_type:
+            return fallback_id, workflow[fallback_id]
+    raise KeyError(f"Required node with class_type '{class_type}' not found in workflow template")
+
 class ComfyClient:
     def __init__(self, base_url: str, workflow_path: Path):
         self.base_url = base_url.rstrip("/")
@@ -22,6 +37,12 @@ class ComfyClient:
             
         with open(self.workflow_path, "r", encoding="utf-8") as f:
             self.workflow_template: Dict[str, Any] = json.load(f)
+            
+        # Verify that expected nodes exist uniquely in template
+        find_unique_node(self.workflow_template, "CLIPTextEncode", "4")
+        find_unique_node(self.workflow_template, "EmptyLatentImage", "5")
+        find_unique_node(self.workflow_template, "KSampler", "6")
+        
         logger.info("Loaded baked Comfy workflow template from %s", self.workflow_path)
 
     def check_health(self) -> bool:
@@ -45,25 +66,25 @@ class ComfyClient:
             seed = random.randint(1, 2**31 - 1)
             
         # Strictly override only authorized nodes
-        # Node 4: CLIPTextEncode
-        if "4" in workflow and "inputs" in workflow["4"]:
-            workflow["4"]["inputs"]["text"] = prompt
-        else:
-            raise KeyError("Node '4' (CLIPTextEncode) missing from workflow template")
+        # 1. CLIPTextEncode (Prompt)
+        _, text_node = find_unique_node(workflow, "CLIPTextEncode", "4")
+        if "inputs" not in text_node:
+            text_node["inputs"] = {}
+        text_node["inputs"]["text"] = prompt
             
-        # Node 5: EmptyLatentImage
-        if "5" in workflow and "inputs" in workflow["5"]:
-            workflow["5"]["inputs"]["width"] = int(width)
-            workflow["5"]["inputs"]["height"] = int(height)
-            workflow["5"]["inputs"]["batch_size"] = 1
-        else:
-            raise KeyError("Node '5' (EmptyLatentImage) missing from workflow template")
+        # 2. EmptyLatentImage (Dimensions)
+        _, latent_node = find_unique_node(workflow, "EmptyLatentImage", "5")
+        if "inputs" not in latent_node:
+            latent_node["inputs"] = {}
+        latent_node["inputs"]["width"] = int(width)
+        latent_node["inputs"]["height"] = int(height)
+        latent_node["inputs"]["batch_size"] = 1
             
-        # Node 6: KSampler
-        if "6" in workflow and "inputs" in workflow["6"]:
-            workflow["6"]["inputs"]["seed"] = int(seed)
-        else:
-            raise KeyError("Node '6' (KSampler) missing from workflow template")
+        # 3. KSampler (Seed)
+        _, sampler_node = find_unique_node(workflow, "KSampler", "6")
+        if "inputs" not in sampler_node:
+            sampler_node["inputs"] = {}
+        sampler_node["inputs"]["seed"] = int(seed)
             
         client_id = str(uuid.uuid4())
         payload = {
@@ -71,7 +92,7 @@ class ComfyClient:
             "client_id": client_id
         }
         
-        # 1. Submit Prompt
+        # Submit Prompt
         req_data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             f"{self.base_url}/prompt",
@@ -91,7 +112,7 @@ class ComfyClient:
             
         logger.info("Submitted prompt %s to ComfyUI (seed=%d, size=%dx%d)", prompt_id, seed, width, height)
         
-        # 2. Poll for Completion
+        # Poll for Completion
         max_wait_seconds = 120.0
         poll_interval = 0.1
         start_poll = time.time()
@@ -108,9 +129,18 @@ class ComfyClient:
                 
             if prompt_id in history:
                 prompt_data = history[prompt_id]
-                outputs = prompt_data.get("outputs", {})
                 
-                # Check SaveImage output (Node 8)
+                # Check for execution failure immediately
+                status_info = prompt_data.get("status", {})
+                if status_info:
+                    status_str = status_info.get("status_str")
+                    completed = status_info.get("completed", False)
+                    if status_str == "error" or (not completed and status_info.get("messages")):
+                        messages = status_info.get("messages", [])
+                        raise RuntimeError(f"ComfyUI execution failed for prompt {prompt_id}: {messages}")
+
+                outputs = prompt_data.get("outputs", {})
+                # Check SaveImage output
                 for node_id, node_output in outputs.items():
                     if "images" in node_output and len(node_output["images"]) > 0:
                         img_info = node_output["images"][0]
@@ -118,7 +148,7 @@ class ComfyClient:
                         subfolder = img_info.get("subfolder", "")
                         img_type = img_info.get("type", "output")
                         
-                        # 3. Retrieve Generated Image
+                        # Retrieve Generated Image
                         view_params = urllib.parse.urlencode({
                             "filename": filename,
                             "subfolder": subfolder,

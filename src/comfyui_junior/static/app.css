@@ -467,9 +467,15 @@ body {
   aspect-ratio: 1 / 1;
   border-radius: var(--radius-md);
   border: 2px solid transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
   overflow: hidden;
   background: var(--bg-surface);
   cursor: pointer;
+  display: block;
+  width: 100%;
+  text-align: left;
   transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
 
@@ -477,6 +483,12 @@ body {
   transform: translateY(-2px);
   border-color: var(--color-primary);
   box-shadow: var(--shadow-sm);
+}
+
+.thumb-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-color: var(--color-primary);
 }
 
 .thumb-card.active {

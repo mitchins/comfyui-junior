@@ -100,7 +100,7 @@ Configure via `.env` or container environment variables:
 | `COMFY_MEMORY_CAP_GIB` | `10.0` | PyTorch caching allocator ceiling |
 | `MODEL_DIR` | `/models` | Path to persistent models volume |
 | `DATA_DIR` | `/data` | Path to temporary output volume |
-| `SAFETY_ENABLED` | `1` | Enable inline v7 DistilBERT safety filter |
+| `SAFETY_ENABLED` | `1` | Enable inline v7 DistilBERT safety filter (Set to `0` for bypass; **WARNING:** Disables all child-safety guarantees, intended for development only) |
 | `SAFETY_DEVICE` | `cuda:0` | PyTorch device for safety classifier |
 | `SAFETY_MODEL_PATH` | `/models/safety/v7_distilbert` | Local path to safety classifier weights |
 | `HF_TOKEN` | *empty* | Optional Hugging Face token |

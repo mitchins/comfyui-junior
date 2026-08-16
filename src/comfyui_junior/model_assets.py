@@ -1,14 +1,28 @@
 import os
 import json
 import logging
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger("comfyui_junior.model_assets")
 
+def calculate_sha256(filepath: Path) -> str:
+    sha = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while chunk := f.read(1024 * 1024 * 16):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+def verify_file_sha256(filepath: Path, expected_sha256: str) -> bool:
+    digest = calculate_sha256(filepath)
+    if digest.lower() != expected_sha256.lower():
+        logger.error("SHA256 mismatch for %s: expected %s, got %s", filepath, expected_sha256, digest)
+        return False
+    return True
+
 def load_manifest(manifest_path: Optional[Path] = None) -> Dict[str, Any]:
     if manifest_path is None:
-        # Check standard config path
         candidate = Path("/app/config/models.json")
         if not candidate.exists():
             candidate = Path(__file__).resolve().parent.parent.parent / "config" / "models.json"
@@ -24,6 +38,9 @@ def ensure_model_assets(
     comfy_dir: Path,
     hf_token: Optional[str] = None,
     safety_model_path: Optional[Path] = None,
+    safety_hf_repo: Optional[str] = None,
+    safety_hf_revision: Optional[str] = None,
+    verify_hashes: bool = False,
     dry_run: bool = False
 ) -> Dict[str, bool]:
     """
@@ -39,18 +56,28 @@ def ensure_model_assets(
 
     for model_info in models:
         model_id = model_info.get("id")
+        model_type = model_info.get("type")
         subfolder = model_info.get("subfolder", "")
         filename = model_info.get("filename", "")
         hf_repo = model_info.get("hf_repo")
         hf_filename = model_info.get("hf_filename")
+        revision = model_info.get("revision")
+        expected_sha256 = model_info.get("sha256")
         is_optional = model_info.get("optional", False)
+
+        # Allow override of safety model remote settings
+        if model_type == "safety_classifier":
+            if safety_hf_repo:
+                hf_repo = safety_hf_repo
+            if safety_hf_revision:
+                revision = safety_hf_revision
 
         target_dir = model_dir / subfolder
         target_dir.mkdir(parents=True, exist_ok=True)
         target_file = target_dir / filename
 
         # Special case: safety model directory override
-        if model_info.get("type") == "safety_classifier" and safety_model_path:
+        if model_type == "safety_classifier" and safety_model_path:
             if safety_model_path.exists():
                 results[model_id] = True
                 logger.info("Safety model found at configured path: %s", safety_model_path)
@@ -58,11 +85,14 @@ def ensure_model_assets(
 
         # Check if model already exists
         if target_file.exists() and (target_file.is_dir() or target_file.stat().st_size > 0):
+            if verify_hashes and expected_sha256 and target_file.is_file():
+                if not verify_file_sha256(target_file, expected_sha256):
+                    raise ValueError(f"Integrity check failed for existing model '{model_id}' at {target_file}")
             logger.info("Model '%s' already present at %s", model_id, target_file)
             results[model_id] = True
         else:
             if dry_run:
-                logger.info("[Dry Run] Model '%s' would be downloaded from %s", model_id, hf_repo)
+                logger.info("[Dry Run] Model '%s' would be downloaded from %s (revision: %s)", model_id, hf_repo, revision)
                 results[model_id] = False
                 continue
 
@@ -74,7 +104,7 @@ def ensure_model_assets(
                 else:
                     raise FileNotFoundError(f"Required model '{model_id}' missing and no HF repository defined.")
 
-            logger.info("Downloading model '%s' from %s...", model_id, hf_repo)
+            logger.info("Downloading model '%s' from %s (revision: %s)...", model_id, hf_repo, revision)
             try:
                 from huggingface_hub import hf_hub_download, snapshot_download
 
@@ -82,6 +112,7 @@ def ensure_model_assets(
                     # Directory download
                     snapshot_download(
                         repo_id=hf_repo,
+                        revision=revision or None,
                         local_dir=str(target_file),
                         token=hf_token or None
                     )
@@ -90,12 +121,18 @@ def ensure_model_assets(
                     downloaded_path = hf_hub_download(
                         repo_id=hf_repo,
                         filename=hf_filename or filename,
+                        revision=revision or None,
                         token=hf_token or None
                     )
-                    # Move/link to target
+                    # Move/copy to target
                     if not target_file.exists():
                         import shutil
                         shutil.copy2(downloaded_path, target_file)
+
+                    if expected_sha256:
+                        if not verify_file_sha256(target_file, expected_sha256):
+                            target_file.unlink(missing_ok=True)
+                            raise ValueError(f"Downloaded model '{model_id}' failed SHA-256 validation.")
 
                 results[model_id] = True
                 logger.info("Successfully acquired model '%s'", model_id)

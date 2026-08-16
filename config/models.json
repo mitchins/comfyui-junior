@@ -6,9 +6,11 @@
       "type": "diffusion_model",
       "filename": "flux-2-klein-4b-nvfp4.safetensors",
       "subfolder": "diffusion_models",
-      "size_bytes": 2641400640,
+      "size_bytes": 2460413488,
+      "sha256": "d8c5007b6a3bbbdfd38538bbcef5101a55dfde81894f58d2e3c8701cdef3542b",
       "hf_repo": "black-forest-labs/FLUX.2-klein-4b-nvfp4",
       "hf_filename": "flux-2-klein-4b-nvfp4.safetensors",
+      "revision": "1db2b2f776c24b76f1122e5f69ab1949fc620068",
       "optional": false
     },
     {
@@ -16,9 +18,11 @@
       "type": "text_encoder",
       "filename": "qwen_3_4b_fp4_flux2.safetensors",
       "subfolder": "text_encoders",
-      "size_bytes": 4133454720,
+      "size_bytes": 3848213998,
+      "sha256": "3eab03a77adb0ee5304a4e677d5c10ac22f9049c1d7c894adca4f8bb39206ca8",
       "hf_repo": "Comfy-Org/flux2-assets",
       "hf_filename": "qwen_3_4b_fp4_flux2.safetensors",
+      "revision": "main",
       "optional": false
     },
     {
@@ -26,9 +30,11 @@
       "type": "vae",
       "filename": "flux2-vae.safetensors",
       "subfolder": "vae",
-      "size_bytes": 354330144,
+      "size_bytes": 336211292,
+      "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
       "hf_repo": "black-forest-labs/FLUX.2-dev",
       "hf_filename": "flux2-vae.safetensors",
+      "revision": "26afe3a78bb242c0a8bb181dcc8937bb16e5c66c",
       "optional": false
     },
     {
@@ -46,6 +52,8 @@
         "special_tokens_map.json"
       ],
       "hf_repo": "mitchins/comfyui-junior-safety",
+      "revision": null,
+      "sha256": null,
       "optional": true
     }
   ]

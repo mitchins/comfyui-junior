@@ -193,8 +193,8 @@ def generate_images(req: ImageGenerationRequest):
             height=height
         )
     except Exception as e:
-        logger.error("Image generation backend failed: %s", e)
-        return openai_error_response(f"Backend generation failed: {e}", "backend_error", status_code=502)
+        logger.error("Image generation backend failed: %s", e, exc_info=True)
+        return openai_error_response("Image generation failed due to a backend error", "backend_error", status_code=502)
         
     b64_data = base64.b64encode(img_bytes).decode("utf-8")
     

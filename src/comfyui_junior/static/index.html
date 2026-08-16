@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Imagine — Safe Image Studio</title>
   <meta name="description" content="Simple, safe, high-speed local image generation appliance powered by FLUX.2 Klein and Blackwell NVFP4.">
   <link rel="stylesheet" href="/static/app.css">
@@ -211,18 +211,17 @@
 
       <div class="recent-grid">
         <template x-for="item in recentList" :key="item.id">
-          <div 
+          <button 
+            type="button"
             class="thumb-card" 
             :class="{ 'active': currentImage && currentImage.id === item.id }"
             @click="selectRecent(item)"
             :title="item.prompt"
-            role="button"
-            tabindex="0"
-            @keydown.enter="selectRecent(item)"
+            :aria-label="'Show image for prompt: ' + item.prompt"
           >
             <img :src="item.blobUrl" :alt="item.prompt" class="thumb-img" loading="lazy" />
             <span class="thumb-badge" x-text="item.aspect ? item.aspect.charAt(0).toUpperCase() : 'S'"></span>
-          </div>
+          </button>
         </template>
       </div>
     </section>

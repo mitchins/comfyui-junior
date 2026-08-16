@@ -65,11 +65,14 @@ class ImageStorage {
   }
 
   async evictOldest() {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const tx = this.db.transaction([STORE_NAME], "readwrite");
       const store = tx.objectStore(STORE_NAME);
       const index = store.index("timestamp");
       const keys = [];
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = (e) => reject(e.target.error);
 
       const cursorReq = index.openKeyCursor(null, "prev");
       cursorReq.onsuccess = (e) => {
@@ -84,9 +87,9 @@ class ImageStorage {
               store.delete(key);
             }
           }
-          resolve();
         }
       };
+      cursorReq.onerror = (e) => reject(e.target.error);
     });
   }
 }

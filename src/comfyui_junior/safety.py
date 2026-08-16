@@ -10,6 +10,15 @@ from transformers import AutoTokenizer, DistilBertModel
 
 logger = logging.getLogger("comfyui_junior.safety")
 
+REQUIRED_MIN_WIDTHS: Dict[str, int] = {
+    "sexual": 3,
+    "nudity": 2,
+    "violence_gore": 2,
+    "substances": 1,
+    "disturbing": 2,
+    "fetish": 2,
+}
+
 @dataclass
 class SafetyResult:
     decision: Literal["PASS", "ROUTE", "BLOCK"]
@@ -38,15 +47,45 @@ class SafetyFilter:
         self.encoder = DistilBertModel.from_pretrained(str(self.model_dir)).to(self.device)
         self.encoder.eval()
         
-        h = torch.load(str(heads_path), map_location=self.device)
+        # Load regression heads with weights_only=True for secure deserialization
+        h = torch.load(str(heads_path), map_location=self.device, weights_only=True)
+        if not isinstance(h, dict) or "dims" not in h or "widths" not in h or "heads" not in h:
+            raise ValueError(f"Invalid safety heads checkpoint structure at {heads_path}")
+
         self.dims: List[str] = h["dims"]
         self.widths: List[int] = h["widths"]
         
+        if len(self.dims) != len(self.widths):
+            raise ValueError(f"Mismatch between dims count ({len(self.dims)}) and widths count ({len(self.widths)})")
+
+        dim_width_map = dict(zip(self.dims, self.widths))
+        for req_dim, req_width in REQUIRED_MIN_WIDTHS.items():
+            if req_dim not in dim_width_map:
+                raise ValueError(f"Missing required safety dimension '{req_dim}' in checkpoint at {heads_path}")
+            actual_width = dim_width_map[req_dim]
+            if actual_width < req_width:
+                raise ValueError(
+                    f"Safety dimension '{req_dim}' requires width >= {req_width}, but checkpoint has width {actual_width}"
+                )
+
         self.heads = nn.ModuleDict()
         for i, (dim, width) in enumerate(zip(self.dims, self.widths)):
+            w_key = f"{i}.weight"
+            b_key = f"{i}.bias"
+            if w_key not in h["heads"] or b_key not in h["heads"]:
+                raise ValueError(f"Missing head weights for index {i} ({dim}) in checkpoint")
+            
+            weight_tensor = h["heads"][w_key]
+            bias_tensor = h["heads"][b_key]
+            if weight_tensor.shape != (width, 768) or bias_tensor.shape != (width,):
+                raise ValueError(
+                    f"Invalid shape for head '{dim}': expected weight ({width}, 768) and bias ({width},), "
+                    f"got weight {weight_tensor.shape} and bias {bias_tensor.shape}"
+                )
+
             lin = nn.Linear(768, width)
-            lin.weight.data = h["heads"][f"{i}.weight"].to(self.device)
-            lin.bias.data = h["heads"][f"{i}.bias"].to(self.device)
+            lin.weight.data = weight_tensor.to(self.device)
+            lin.bias.data = bias_tensor.to(self.device)
             self.heads[dim] = lin
         self.heads.eval()
         

@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 @dataclass
 class Settings:
@@ -23,8 +24,8 @@ class Settings:
     SAFETY_ENABLED: bool = os.getenv("SAFETY_ENABLED", "1").lower() in ("1", "true", "yes")
     SAFETY_DEVICE: str = os.getenv("SAFETY_DEVICE", "cuda:0")
     SAFETY_MODEL_PATH: str = os.getenv("SAFETY_MODEL_PATH", "/models/safety/v7_distilbert")
-    SAFETY_HF_REPO: str = os.getenv("SAFETY_HF_REPO", "mitchins/comfyui-junior-safety")
-    SAFETY_HF_REVISION: str = os.getenv("SAFETY_HF_REVISION", "main")
+    SAFETY_HF_REPO: Optional[str] = os.getenv("SAFETY_HF_REPO") or None
+    SAFETY_HF_REVISION: Optional[str] = os.getenv("SAFETY_HF_REVISION") or None
 
     # Hugging Face
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
