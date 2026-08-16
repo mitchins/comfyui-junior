@@ -35,12 +35,26 @@ class SafetyFilter:
         self.device = torch.device(device if torch.cuda.is_available() and "cuda" in device else "cpu")
         logger.info("Initializing SafetyFilter from %s on %s...", self.model_dir, self.device)
         
-        if not self.model_dir.exists():
-            raise FileNotFoundError(f"Safety model directory not found: {self.model_dir}")
-            
         heads_path = self.model_dir / "heads.pt"
         if not heads_path.exists():
             raise FileNotFoundError(f"Safety heads file not found: {heads_path}")
+
+        # Verify safety model directory assets and digests against manifest
+        try:
+            from comfyui_junior.model_assets import load_manifest, verify_directory_assets
+            manifest = load_manifest()
+            for m in manifest.get("models", []):
+                if m.get("id") == "junior-safety-v7":
+                    expected_files = m.get("files")
+                    file_digests = m.get("file_digests")
+                    if expected_files:
+                        if not verify_directory_assets(self.model_dir, expected_files, file_digests, verify_hashes=True):
+                            raise ValueError(f"Safety model directory at {self.model_dir} failed integrity verification.")
+                    break
+        except Exception as e:
+            if isinstance(e, (ValueError, FileNotFoundError)):
+                raise
+            logger.debug("Manifest verification skipped in SafetyFilter: %s", e)
             
         t0 = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(str(self.model_dir))

@@ -107,14 +107,19 @@ def ensure_model_assets(
         # Special case: safety model directory override
         if model_type == "safety_classifier" and safety_model_path:
             if safety_model_path.exists():
+                if expected_files and not verify_directory_assets(
+                    safety_model_path, expected_files, file_digests, verify_hashes=True
+                ):
+                    raise ValueError(f"Configured safety model at {safety_model_path} failed integrity checks.")
                 results[model_id] = True
-                logger.info("Safety model found at configured path: %s", safety_model_path)
+                logger.info("Safety model verified at configured path: %s", safety_model_path)
                 continue
 
         # Check if model already exists
         if target_file.exists():
             if target_file.is_dir() and expected_files:
-                if verify_directory_assets(target_file, expected_files, file_digests, verify_hashes=verify_hashes):
+                check_hashes = True if model_type == "safety_classifier" else verify_hashes
+                if verify_directory_assets(target_file, expected_files, file_digests, verify_hashes=check_hashes):
                     logger.info("Model directory '%s' valid at %s", model_id, target_file)
                     results[model_id] = True
                 else:

@@ -33,7 +33,7 @@
       "size_bytes": 336211292,
       "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
       "hf_repo": "black-forest-labs/FLUX.2-dev",
-      "hf_filename": "flux2-vae.safetensors",
+      "hf_filename": "ae.safetensors",
       "revision": "26afe3a78bb242c0a8bb181dcc8937bb16e5c66c",
       "optional": false
     },

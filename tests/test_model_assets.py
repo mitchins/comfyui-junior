@@ -1,5 +1,6 @@
 import json
 import unittest
+import unittest.mock
 import tempfile
 import torch
 from pathlib import Path
@@ -88,16 +89,29 @@ class TestModelAssets(unittest.TestCase):
                         dry_run=True
                     )
 
-            # Accept valid 40-character commit SHA
+            # Accept valid 40-character commit SHA and test download flow offline
             valid_sha = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
-            res = ensure_model_assets(
-                model_dir=model_dir,
-                comfy_dir=comfy_dir,
-                safety_hf_repo="mitchins/comfyui-junior-safety",
-                safety_hf_revision=valid_sha,
-                dry_run=True
-            )
-            self.assertIn("junior-safety-v7", res)
+            (model_dir / "diffusion_models").mkdir(parents=True, exist_ok=True)
+            (model_dir / "text_encoders").mkdir(parents=True, exist_ok=True)
+            (model_dir / "vae").mkdir(parents=True, exist_ok=True)
+            (model_dir / "diffusion_models" / "flux-2-klein-4b-nvfp4.safetensors").write_bytes(b"dummy")
+            (model_dir / "text_encoders" / "qwen_3_4b_fp4_flux2.safetensors").write_bytes(b"dummy")
+            (model_dir / "vae" / "flux2-vae.safetensors").write_bytes(b"dummy")
+
+            with unittest.mock.patch("huggingface_hub.snapshot_download") as mock_snap, \
+                 unittest.mock.patch("comfyui_junior.model_assets.verify_directory_assets", return_value=True):
+                res = ensure_model_assets(
+                    model_dir=model_dir,
+                    comfy_dir=comfy_dir,
+                    safety_hf_repo="mitchins/comfyui-junior-safety",
+                    safety_hf_revision=valid_sha,
+                    dry_run=False
+                )
+                mock_snap.assert_called_once()
+                call_kwargs = mock_snap.call_args.kwargs
+                self.assertEqual(call_kwargs.get("repo_id"), "mitchins/comfyui-junior-safety")
+                self.assertEqual(call_kwargs.get("revision"), valid_sha)
+                self.assertTrue(res.get("junior-safety-v7"))
 
     def test_directory_asset_verification(self):
         from comfyui_junior.model_assets import verify_directory_assets
@@ -123,6 +137,11 @@ class TestModelAssets(unittest.TestCase):
             self.assertTrue(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=False))
             file2.unlink()
             self.assertFalse(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=False))
+
+            # Zero-byte file
+            file2.write_bytes(b"")
+            self.assertFalse(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=False))
+            self.assertFalse(verify_directory_assets(dir_path, expected_files, file_digests, verify_hashes=True))
 
             # Corrupted digest
             file2.write_bytes(b"corrupted content")

@@ -26,8 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up virtual environment
-RUN python3.10 -m venv /opt/venv && \
-    pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN python3.10 -m venv /opt/venv
 
 # Copy and install complete locked dependency graph (including torch cu130, ComfyUI, and Junior deps)
 WORKDIR /app
