@@ -60,10 +60,10 @@
         "tokenizer.json": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
         "vocab.txt": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
       },
-      "hf_repo": "mitchins/comfyui-junior-safety",
-      "revision": null,
+      "hf_repo": "Mitchins/comfyui-junior-safety",
+      "revision": "8969dc6b8f479b2048df5ca11290b22651903a51",
       "sha256": null,
-      "optional": true
+      "optional": false
     }
   ]
 }

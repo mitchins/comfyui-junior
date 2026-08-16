@@ -19,12 +19,17 @@ class TestModelAssets(unittest.TestCase):
         self.assertIn("qwen3-4b-fp4-flux2", ids)
         self.assertIn("flux2-vae", ids)
 
-        # Verify manifest structure includes revisions and sha256
+        # Verify manifest structure includes revisions and sha256 or file_digests
         for m in models:
             if not m.get("optional"):
                 self.assertIn("revision", m)
-                self.assertIn("sha256", m)
-                self.assertIsNotNone(m["sha256"])
+                self.assertIsNotNone(m["revision"])
+                if m.get("type") == "safety_classifier":
+                    self.assertIn("file_digests", m)
+                    self.assertTrue(len(m["file_digests"]) > 0)
+                else:
+                    self.assertIn("sha256", m)
+                    self.assertIsNotNone(m["sha256"])
 
     def test_ensure_model_assets_dry_run(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -197,3 +202,51 @@ class TestWorkflowValidation(unittest.TestCase):
         for node_id, node in wf.items():
             self.assertIn("class_type", node)
             self.assertIn("inputs", node)
+
+class TestSafetyFilterManifestValidation(unittest.TestCase):
+    def test_safety_filter_fails_on_missing_manifest_record(self):
+        from comfyui_junior.safety import SafetyFilter
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_path = Path(tmp_dir)
+            (model_path / "heads.pt").write_bytes(b"dummy")
+            
+            with unittest.mock.patch("comfyui_junior.model_assets.load_manifest", return_value={"models": []}):
+                with self.assertRaises(ValueError) as ctx:
+                    SafetyFilter(model_dir=model_path, device="cpu")
+                self.assertIn("exactly one 'junior-safety-v7' model record", str(ctx.exception))
+
+    def test_safety_filter_fails_on_missing_digest(self):
+        from comfyui_junior.safety import SafetyFilter
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_path = Path(tmp_dir)
+            (model_path / "heads.pt").write_bytes(b"dummy")
+            
+            bad_manifest = {
+                "models": [{
+                    "id": "junior-safety-v7",
+                    "files": ["heads.pt", "model.safetensors"],
+                    "file_digests": {"heads.pt": "abc"}
+                }]
+            }
+            with unittest.mock.patch("comfyui_junior.model_assets.load_manifest", return_value=bad_manifest):
+                with self.assertRaises(ValueError) as ctx:
+                    SafetyFilter(model_dir=model_path, device="cpu")
+                self.assertIn("missing digest for expected file 'model.safetensors'", str(ctx.exception))
+
+    def test_safety_filter_fails_on_directory_asset_mismatch(self):
+        from comfyui_junior.safety import SafetyFilter
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_path = Path(tmp_dir)
+            (model_path / "heads.pt").write_bytes(b"dummy")
+            
+            bad_manifest = {
+                "models": [{
+                    "id": "junior-safety-v7",
+                    "files": ["heads.pt"],
+                    "file_digests": {"heads.pt": "0000000000000000000000000000000000000000000000000000000000000000"}
+                }]
+            }
+            with unittest.mock.patch("comfyui_junior.model_assets.load_manifest", return_value=bad_manifest):
+                with self.assertRaises(ValueError) as ctx:
+                    SafetyFilter(model_dir=model_path, device="cpu")
+                self.assertIn("failed integrity verification", str(ctx.exception))

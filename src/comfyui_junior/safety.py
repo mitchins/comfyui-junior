@@ -39,22 +39,28 @@ class SafetyFilter:
         if not heads_path.exists():
             raise FileNotFoundError(f"Safety heads file not found: {heads_path}")
 
-        # Verify safety model directory assets and digests against manifest
-        try:
-            from comfyui_junior.model_assets import load_manifest, verify_directory_assets
-            manifest = load_manifest()
-            for m in manifest.get("models", []):
-                if m.get("id") == "junior-safety-v7":
-                    expected_files = m.get("files")
-                    file_digests = m.get("file_digests")
-                    if expected_files:
-                        if not verify_directory_assets(self.model_dir, expected_files, file_digests, verify_hashes=True):
-                            raise ValueError(f"Safety model directory at {self.model_dir} failed integrity verification.")
-                    break
-        except Exception as e:
-            if isinstance(e, (ValueError, FileNotFoundError)):
-                raise
-            logger.debug("Manifest verification skipped in SafetyFilter: %s", e)
+        # Fail-closed safety model directory and digest verification against manifest
+        from comfyui_junior.model_assets import load_manifest, verify_directory_assets
+        manifest = load_manifest()
+        safety_records = [m for m in manifest.get("models", []) if m.get("id") == "junior-safety-v7"]
+        if len(safety_records) != 1:
+            raise ValueError(
+                f"Manifest must contain exactly one 'junior-safety-v7' model record, found {len(safety_records)}"
+            )
+
+        safety_record = safety_records[0]
+        expected_files: List[str] = safety_record.get("files") or []
+        file_digests: Dict[str, str] = safety_record.get("file_digests") or {}
+
+        if not expected_files:
+            raise ValueError("Manifest 'junior-safety-v7' record missing non-empty 'files' list")
+
+        for req_f in expected_files:
+            if req_f not in file_digests or not file_digests[req_f]:
+                raise ValueError(f"Manifest 'junior-safety-v7' missing digest for expected file '{req_f}'")
+
+        if not verify_directory_assets(self.model_dir, expected_files, file_digests, verify_hashes=True):
+            raise ValueError(f"Safety model directory at {self.model_dir} failed integrity verification.")
             
         t0 = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(str(self.model_dir))
