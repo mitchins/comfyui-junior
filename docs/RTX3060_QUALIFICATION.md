@@ -198,6 +198,16 @@ generations, no weight streaming warm.
 
 ## 6. Safety architecture (production vs analysis mode)
 
+> **Historical (POC-era) design.** The analysis mode described in this
+> section - the separate `/internal/eval/render-and-classify` endpoint gated
+> by `JUNIOR_ENABLE_IMAGE_ANALYSIS_MODE` - was the runtime-workspace
+> implementation. The shipped v2 mechanism is the consolidated
+> `JUNIOR_EVALUATION_INSTANCE` environment variable (see README): a
+> startup-only, owner-operated flag under which `/v1/images/generations`
+> itself runs unfiltered (verified by `tests/test_eval_mode.py`), the child
+> frontend is disabled, and `/health` reports `role=evaluation`. Operators
+> must NOT read this section as describing the shipped isolation model.
+
 **Production** (`POST /v1/images/generations`): wellformed → language → FP16
 v29db → policy_v6 → PASS → generation. Unconditional: no `SAFETY_ENABLED`
 env, no request field, no header, no query parameter can weaken it. Classifier

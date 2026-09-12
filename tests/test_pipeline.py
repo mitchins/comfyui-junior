@@ -107,6 +107,25 @@ class TestProductionGate(unittest.TestCase):
         self.assertEqual(result.failure_code, FAILURE_POLICY)
         self.assertEqual(result.gate, "classifier_error")
 
+    def test_prompt_too_long_fails_format_invalid(self):
+        """An unclassifiable (over token-window) prompt never reaches generation."""
+        from comfyui_junior.classifier import PromptTooLongError
+        gate = ProductionGate(_StubClassifier(PromptTooLongError("prompt tokenizes to 300 tokens")))
+        result = gate.check("a cute penguin" * 100)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure_code, FAILURE_PROMPT_FORMAT)
+        self.assertEqual(result.gate, "classifier_too_long")
+
+    def test_language_gate_failure_fails_closed(self):
+        """A missing or unusable lid.176 model fails closed at stage 2."""
+        gate = ProductionGate(_StubClassifier())
+        with patch.object(pipeline.langgate, "_model", None), \
+             patch.object(pipeline.langgate, "check", side_effect=FileNotFoundError("lid.176.bin missing")):
+            result = gate.check("a cute penguin under a starry sky")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure_code, FAILURE_POLICY)
+        self.assertEqual(result.gate, "language_error")
+
 
 class TestEvaluationBypassGate(unittest.TestCase):
     """Evaluation instances permit every prompt by design."""

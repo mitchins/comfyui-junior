@@ -119,6 +119,29 @@ class TestAPIEndpoints(unittest.TestCase):
                         self.assertEqual(resp.status_code, 400, body)
                         self.assertEqual(resp.json()["error"]["code"], code)
 
+    def test_null_size_rejected_by_schema(self):
+        """An explicit null size fails schema validation instead of crashing."""
+        with patch("comfyui_junior.app.JuniorSafetyClassifier", _StubClassifier), \
+             patch("comfyui_junior.app.ComfyClient"):
+            with self._client() as client:
+                resp = client.post("/v1/images/generations",
+                                   json={"prompt": "a puppy", "size": None})
+                self.assertEqual(resp.status_code, 422)
+
+    def test_backend_error_is_generic_for_clients(self):
+        """Backend failures return a fixed message without internal details."""
+        with patch("comfyui_junior.app.JuniorSafetyClassifier", _StubClassifier), \
+             patch("comfyui_junior.app.ComfyClient") as mock_comfy:
+            mock_comfy.return_value.generate_image.side_effect = RuntimeError(
+                "secret internal path /app/ComfyUI leak")
+            with self._client() as client:
+                resp = client.post("/v1/images/generations", json={"prompt": "a puppy"})
+                self.assertEqual(resp.status_code, 502)
+                message = resp.json()["error"]["message"]
+                self.assertNotIn("secret", message)
+                self.assertNotIn("ComfyUI", message)
+                self.assertIn("couldn't be made", message)
+
     def test_generation_pass_flow_with_style_template(self):
         """A passing prompt generates and reports the expanded render prompt."""
         dummy_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"

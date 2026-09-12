@@ -80,6 +80,19 @@ class ClassificationResult:
 #: Manifest record id for the production safety artifact.
 _MANIFEST_ID = "junior-safety-v29db"
 
+#: Serving-critical files the manifest record must always declare.
+_REQUIRED_ARTIFACT_FILES = ("model.safetensors", "heads.pt", "config.json", "tokenizer.json")
+
+
+class PromptTooLongError(ValueError):
+    """Raised when a rendered prompt exceeds the classifier's token window.
+
+    The production contract requires the complete rendered prompt (the exact
+    text sent to ComfyUI) to be classified; silently truncating at
+    :data:`MAX_LEN` would allow unclassified content to reach generation, so
+    over-length prompts are rejected fail-closed instead.
+    """
+
 
 def _verify_artifact_against_manifest(model_dir: str) -> None:
     """Fail closed unless the artifact matches the pinned manifest digests.
@@ -105,6 +118,15 @@ def _verify_artifact_against_manifest(model_dir: str) -> None:
     record = records[0]
     expected_files = record.get("files") or []
     digests = record.get("file_digests") or {}
+    # An empty (or serving-file-incomplete) declaration must not pass
+    # vacuously: verification is only meaningful over the known artifact set.
+    if not expected_files:
+        raise ValueError(f"manifest record '{_MANIFEST_ID}' declares no expected files")
+    missing_required = [f for f in _REQUIRED_ARTIFACT_FILES if f not in expected_files]
+    if missing_required:
+        raise ValueError(
+            f"manifest record '{_MANIFEST_ID}' missing required serving files: {missing_required}"
+        )
     # First pass: every expected file must have a pinned digest.
     for rel in expected_files:
         if rel not in digests:
@@ -194,11 +216,26 @@ class JuniorSafetyClassifier:
 
     @torch.no_grad()
     def _pooled(self, texts: List[str]) -> torch.Tensor:
-        """Encode texts and apply masked mean pooling over the sequence."""
+        """Encode texts and apply masked mean pooling over the sequence.
+
+        Raises:
+            PromptTooLongError: when any text exceeds the classifier's token
+                window (complete-prompt coverage is a hard requirement).
+        """
         enc = self.tokenizer(
             texts, truncation=True, max_length=MAX_LEN,
             padding=True, return_tensors="pt",
-        ).to(self.device)
+        )
+        if len(enc["input_ids"]) and int(enc["attention_mask"].sum(dim=1).max()) >= MAX_LEN:
+            # A sequence that fills the window may have been truncated: verify
+            # without truncation so no rendered content escapes classification.
+            full = self.tokenizer(texts, truncation=False, return_attention_mask=False)
+            for ids in full["input_ids"]:
+                if len(ids) > MAX_LEN:
+                    raise PromptTooLongError(
+                        f"prompt tokenizes to {len(ids)} tokens > classifier window {MAX_LEN}"
+                    )
+        enc = enc.to(self.device)
         out = self.encoder(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"]).last_hidden_state
         mask = enc["attention_mask"].unsqueeze(-1).to(out.dtype)
         return (out * mask).sum(1) / mask.sum(1).clamp(min=1e-9)

@@ -18,8 +18,11 @@ Deterministic, unicode-based, no ML. A prompt is rejected when any rule fires:
   pass; ``n4k3d``/``s3x`` fail).
 * **W4** spaced-out words: five or more consecutive single letters separated
   by single spaces/hyphens/dots (``n a k e d``).
-* **W5** structural junk: empty, longer than 600 characters, control
-  characters, or a single character run longer than 31.
+* **W5** structural junk: empty, longer than 1700 characters (the 1500-char
+  request contract plus style-template expansion headroom), control
+  characters, or a single character run longer than 31. Prompts that fit the
+  character bound but exceed the classifier's token window are rejected
+  fail-closed at classification time instead (see ``classifier.py``).
 
 All thresholds are deliberately conservative: normal child-typed prompts
 (``a 4 year old cat``, ``8k space poster``, ``i want 2 cats``) must pass.
@@ -38,9 +41,13 @@ GATE_NAME = "wellformed"
 # frozen canonicalizer's map to avoid drift).
 _CONFUSABLES = set("авекмнорстухіѕјԁɡαβεζηικμνορτυχ")
 
-_SINGLE_LETTER_RUN = re.compile(r"(?:[A-Za-z](?:[\s.\-]{1,2})){3,}[A-Za-z](?![A-Za-z])")
+_SINGLE_LETTER_RUN = re.compile(r"(?:[A-Za-z](?:[\s.\-]{1,2})){4,}[A-Za-z](?![A-Za-z])")
 _LONG_RUN = re.compile(r"(.)\1{31,}")
 _TOKEN = re.compile(r"[^\s]+")
+
+# Strip ALL leading/trailing non-alphanumerics (ASCII and Unicode punctuation
+# alike) so tokens like "«n4k3d»" cannot dodge the interior-digit check.
+_TOKEN_TRIM = re.compile(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$")
 
 # Tokens whose interior digits are known-benign technical vocabulary.
 _DIGIT_TOKEN_ALLOWLIST = {
@@ -94,8 +101,8 @@ def check(prompt: str) -> WellformedResult:
 
     if not prompt or not prompt.strip():
         return fail("W5", "empty prompt")
-    if len(prompt) > 600:
-        return fail("W5", f"prompt too long ({len(prompt)} > 600 chars)")
+    if len(prompt) > 1700:
+        return fail("W5", f"prompt too long ({len(prompt)} > 1700 chars)")
     if _LONG_RUN.search(prompt):
         return fail("W5", "repetition run > 31 chars")
 
@@ -113,7 +120,7 @@ def check(prompt: str) -> WellformedResult:
 
     # W3: interior leet digits.
     for tok in _TOKEN.findall(prompt):
-        t = tok.strip(".,!?;:'\"()[]")
+        t = _TOKEN_TRIM.sub("", tok)
         if not t or t.lower() in _DIGIT_TOKEN_ALLOWLIST:
             continue
         has_alpha = any(c.isalpha() for c in t)

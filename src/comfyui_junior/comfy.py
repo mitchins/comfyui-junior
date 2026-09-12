@@ -45,15 +45,20 @@ class ComfyClient:
         """
         self.base_url = base_url.rstrip("/")
         self.quality_steps = quality_steps or {}
-        if not workflow_path or not (workflow_path.startswith("http://") or workflow_path.startswith("https://")):
+        if workflow_path and (workflow_path.startswith("https://") or workflow_path.startswith("http://")):
+            # Remote workflow sources are an operator-supplied override:
+            # plaintext http:// is rejected (tampering vector) and only
+            # https:// is accepted. Local paths remain the default.
+            if not workflow_path.startswith("https://"):
+                raise ValueError("remote workflow sources must use https:// (plaintext http is not allowed)")
+            with urllib.request.urlopen(workflow_path, timeout=10.0) as resp:
+                self.workflow_template: Dict[str, Any] = json.loads(resp.read().decode("utf-8"))
+        else:
             import os
-            if not os.path.exists(workflow_path):
+            if not workflow_path or not os.path.exists(workflow_path):
                 raise FileNotFoundError(f"Workflow template not found: {workflow_path}")
             with open(workflow_path, "r") as f:
-                self.workflow_template: Dict[str, Any] = json.load(f)
-        else:
-            with urllib.request.urlopen(workflow_path, timeout=10.0) as resp:
-                self.workflow_template = json.loads(resp.read().decode("utf-8"))
+                self.workflow_template = json.load(f)
         self._roles = self._index_roles(self.workflow_template)
         logger.info("Loaded Comfy workflow %s (roles=%s)", workflow_path, self._roles)
 
@@ -78,6 +83,16 @@ class ComfyClient:
             ct = node.get("class_type", "")
             if ct in _OVERRIDE_ROLES and _OVERRIDE_ROLES[ct] not in roles:
                 roles[_OVERRIDE_ROLES[ct]] = nid
+        # Prefer the text encoder actually wired to the sampler's positive
+        # input: with distinct positive/negative encoders, writing the prompt
+        # into whichever CLIPTextEncode appears first would be wrong.
+        sampler_id = roles.get("sampler")
+        if sampler_id:
+            positive = workflow[sampler_id].get("inputs", {}).get("positive")
+            if isinstance(positive, list) and positive and str(positive[0]) in workflow:
+                linked = workflow[str(positive[0])]
+                if isinstance(linked, dict) and linked.get("class_type") == "CLIPTextEncode":
+                    roles["text"] = str(positive[0])
         missing = [r for r in ("text", "latent", "sampler") if r not in roles]
         if missing:
             raise ValueError(f"workflow missing required node roles: {missing}")

@@ -77,7 +77,7 @@ curl -X POST http://localhost:8000/v1/images/generations \
   }' | jq '.data[0].b64_json' -r | base64 -d > penguin.png
 ```
 
-Request fields: `prompt` (1-1500 chars), `size` (each side a multiple of 16 between 16 and 1344), `quality` (`normal`|`high`), `style` (`none`|`real_photo`|`cartoon`|`colouring_sheet`; explicit allowlist, reported back as `revised_prompt` and `meta.style_template`).
+Request fields: `prompt` (1-1500 characters; prompts that cannot be fully classified after style expansion - including over-length ones - are rejected fail-closed with `prompt_format_invalid`), `size` (each side a multiple of 16 between 16 and 1344), `quality` (`normal`|`high`), `style` (`none`|`real_photo`|`cartoon`|`colouring_sheet`; explicit allowlist, reported back as `revised_prompt` and `meta.style_template`).
 
 ### Prompt Safety Pipeline (unconditional)
 

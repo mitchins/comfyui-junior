@@ -145,6 +145,36 @@ class TestComfyNodeResolution(unittest.TestCase):
         })
         self.assertEqual(roles["text"], "1")
 
+    def test_text_role_follows_sampler_positive_link(self):
+        """With distinct encoders, the prompt goes to the positive one."""
+        wf = {
+            "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "negative"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "positive"}},
+            "3": {"class_type": "EmptyLatentImage", "inputs": {}},
+            "4": {"class_type": "KSampler", "inputs": {"positive": ["2", 0], "negative": ["1", 0]}},
+        }
+        roles = ComfyClient._index_roles(wf)
+        self.assertEqual(roles["text"], "2")
+
+    def test_plaintext_remote_workflow_rejected(self):
+        """http:// workflow sources are refused; https:// is the only remote scheme."""
+        valid = {
+            "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "x"}},
+            "2": {"class_type": "EmptyLatentImage", "inputs": {}},
+            "3": {"class_type": "KSampler", "inputs": {}},
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(valid, f)
+            path = f.name
+        try:
+            ComfyClient(base_url="http://127.0.0.1:8188", workflow_path=path)  # local path ok
+        finally:
+            Path(path).unlink(missing_ok=True)
+        with self.assertRaises(ValueError):
+            ComfyClient(base_url="http://127.0.0.1:8188", workflow_path="http://example.com/wf.json")
+        with self.assertRaises(FileNotFoundError):
+            ComfyClient(base_url="http://127.0.0.1:8188", workflow_path="ftp://example.com/wf.json")
+
 
 class TestWorkflowValidation(unittest.TestCase):
     """Both packaged workflows contain the required tiled-decode graph."""
@@ -191,24 +221,49 @@ class TestClassifierManifestValidation(unittest.TestCase):
                 self._init_classifier(Path(tmp_dir), {"models": []})
             self.assertIn("exactly one 'junior-safety-v29db'", str(ctx.exception))
 
-    def test_missing_digest_fails(self):
-        """A record without a digest for an expected file is rejected."""
+    def test_empty_files_declaration_fails(self):
+        """A record declaring no files must not pass verification vacuously."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             (Path(tmp_dir) / "heads.pt").write_bytes(b"dummy")
             bad = {"models": [{"id": "junior-safety-v29db",
-                               "files": ["heads.pt", "model.safetensors"],
+                               "files": [], "file_digests": {}}]}
+            with self.assertRaises(ValueError) as ctx:
+                self._init_classifier(Path(tmp_dir), bad)
+            self.assertIn("declares no expected files", str(ctx.exception))
+
+    def test_incomplete_serving_files_declaration_fails(self):
+        """Records missing model.safetensors/heads.pt/tokenizer files are rejected."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            (Path(tmp_dir) / "heads.pt").write_bytes(b"dummy")
+            bad = {"models": [{"id": "junior-safety-v29db",
+                               "files": ["heads.pt"],
                                "file_digests": {"heads.pt": "0" * 64}}]}
+            with self.assertRaises(ValueError) as ctx:
+                self._init_classifier(Path(tmp_dir), bad)
+            self.assertIn("missing required serving files", str(ctx.exception))
+
+    def test_missing_digest_fails(self):
+        """A record without a digest for an expected file is rejected."""
+        required = ["model.safetensors", "heads.pt", "config.json", "tokenizer.json"]
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            for name in required:
+                (Path(tmp_dir) / name).write_bytes(b"dummy")
+            bad = {"models": [{"id": "junior-safety-v29db",
+                               "files": required + ["spm.model"],
+                               "file_digests": {f: "0" * 64 for f in required}}]}
             with self.assertRaises(ValueError) as ctx:
                 self._init_classifier(Path(tmp_dir), bad)
             self.assertIn("missing digest", str(ctx.exception))
 
     def test_digest_mismatch_fails(self):
         """A file whose digest deviates from the pin is rejected."""
+        required = ["model.safetensors", "heads.pt", "config.json", "tokenizer.json"]
         with tempfile.TemporaryDirectory() as tmp_dir:
-            (Path(tmp_dir) / "heads.pt").write_bytes(b"dummy")
+            for name in required:
+                (Path(tmp_dir) / name).write_bytes(b"dummy")
             bad = {"models": [{"id": "junior-safety-v29db",
-                               "files": ["heads.pt"],
-                               "file_digests": {"heads.pt": "0" * 64}}]}
+                               "files": required,
+                               "file_digests": {f: "0" * 64 for f in required}}]}
             with self.assertRaises(ValueError) as ctx:
                 self._init_classifier(Path(tmp_dir), bad)
             self.assertIn("failed integrity verification", str(ctx.exception))

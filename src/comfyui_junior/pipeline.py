@@ -27,6 +27,7 @@ from comfyui_junior.classifier import (
     POLICY_VERSION,
     ClassificationResult,
     JuniorSafetyClassifier,
+    PromptTooLongError,
 )
 
 logger = logging.getLogger("comfyui_junior.pipeline")
@@ -95,7 +96,15 @@ class ProductionGate:
                               "That text looks scrambled or uses disguised letters.",
                               gate="wellformed")
 
-        lang = langgate.check(prompt)
+        try:
+            lang = langgate.check(prompt)
+        except Exception:
+            # Missing/corrupt/unusable lid.176 fails closed rather than
+            # letting unverified-language prompts reach the classifier.
+            logger.exception("language gate failure — failing closed")
+            return GateResult(False, FAILURE_POLICY,
+                              "We couldn't check that prompt, so we can't use it.",
+                              gate="language_error")
         if not lang.ok:
             return GateResult(False, FAILURE_LANGUAGE,
                               f"Sorry, we can only understand English right now (detected: {lang.language}).",
@@ -103,6 +112,12 @@ class ProductionGate:
 
         try:
             res = self.classifier.classify(prompt)
+        except PromptTooLongError:
+            # The complete rendered prompt cannot be fully classified, so it
+            # must not reach generation with unclassified trailing content.
+            return GateResult(False, FAILURE_PROMPT_FORMAT,
+                              "That idea is too long for us to check properly. Try a shorter idea.",
+                              gate="classifier_too_long")
         except Exception:
             logger.exception("classifier failure — failing closed")
             return GateResult(False, FAILURE_POLICY,

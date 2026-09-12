@@ -71,6 +71,8 @@ class ImageStorage {
       const index = store.index("timestamp");
       const keys = [];
 
+      const settle = () => resolve(); // eviction is best-effort; never leave callers pending
+
       const cursorReq = index.openKeyCursor(null, "prev");
       cursorReq.onsuccess = (e) => {
         const cursor = e.target.result;
@@ -87,6 +89,9 @@ class ImageStorage {
           resolve();
         }
       };
+      cursorReq.onerror = settle;
+      tx.onerror = settle;
+      tx.onabort = settle;
     });
   }
 }
@@ -303,7 +308,7 @@ document.addEventListener("alpine:init", () => {
       this.prompt = item.prompt;
       if (item.aspect) this.aspect = item.aspect;
       if (item.quality) this.quality = item.quality;
-      if (item.styleMode) this.styleMode = item.styleMode;
+      this.styleMode = item.styleMode || "none";
       this.errorMessage = null;
     },
 

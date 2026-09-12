@@ -176,7 +176,7 @@ class ImageGenerationRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=1500)
     quality: Optional[str] = Field(default="normal", description='"normal" or "high"')
     response_format: Optional[str] = Field(default="b64_json", description='Only "b64_json" is supported.')
-    size: Optional[str] = Field(default="1024x1024")
+    size: str = Field(default="1024x1024")
     style: Optional[str] = Field(default="none", description='"none" or a named template, e.g. "colouring_sheet"')
     user: Optional[str] = None
 
@@ -262,11 +262,13 @@ def generate_images(req: ImageGenerationRequest):
             FAILURE_LANGUAGE: "Sorry! We can only understand English right now. Try writing your idea in English.",
             FAILURE_POLICY: "That idea isn't something we can make a picture of. Try a different, friendlier idea!",
         }.get(result.failure_code, "We can't use that prompt.")
-        logger.info("gate rejected (code=%s gate=%s): %.60r", result.failure_code, result.gate, req.prompt)
+        # Prompt content is deliberately not logged (child privacy): only the
+        # outcome, gate, and non-sensitive metadata are recorded.
+        logger.info("gate rejected (code=%s gate=%s chars=%d)", result.failure_code, result.gate, len(render_prompt))
         return openai_error(friendly, result.failure_code or FAILURE_POLICY, "prompt", 400,
                             extra={"safety_failure_code": result.failure_code, "gate": result.gate})
-    logger.info("gate %s (%.1fms): %.60r", result.gate,
-                result.classification.latency_ms if result.classification else -1, render_prompt)
+    logger.info("gate %s (%.1fms, chars=%d)", result.gate,
+                result.classification.latency_ms if result.classification else -1, len(render_prompt))
 
     # 4. Generation.
     if comfy_client is None:
@@ -274,9 +276,10 @@ def generate_images(req: ImageGenerationRequest):
     try:
         img_bytes, gen_latency = comfy_client.generate_image(
             prompt=render_prompt, width=width, height=height, steps=steps)
-    except Exception as e:
-        logger.error("backend generation failed: %s", e)
-        return openai_error(f"Backend generation failed: {e}", "backend_error", status_code=502)
+    except Exception:
+        logger.exception("backend generation failed")
+        return openai_error("That picture couldn't be made right now. Please try again.",
+                            "backend_error", status_code=502)
 
     return {
         "created": int(time.time()),

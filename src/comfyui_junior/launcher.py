@@ -78,7 +78,7 @@ def check_hardware_environment(stack: str):
             f"[Hardware Contract Violation] blackwell_nvfp4 requires an NVIDIA Blackwell SM120 GPU; "
             f"detected compute capability {major}.{minor}. Use JUNIOR_IMAGE_STACK=ampere_fp8 on this GPU."
         )
-    if stack == "ampere_fp8" and major < 8:
+    if stack == "ampere_fp8" and (major < 8 or (major == 8 and minor < 6)):
         raise RuntimeError(
             f"[Hardware Contract Violation] ampere_fp8 requires SM86 (Ampere) or newer; "
             f"detected compute capability {major}.{minor}."
@@ -95,7 +95,7 @@ def effective_allocator_cap_gib(stack: str) -> float:
     request-shape clamp — see docs/RTX3060_QUALIFICATION.md).
     """
     if os.getenv("COMFY_MEMORY_CAP_GIB") is not None:
-        return settings.COMFY_MEMORY_CAP_GIB
+        return float(os.environ["COMFY_MEMORY_CAP_GIB"])
     return 10.0 if stack == "blackwell_nvfp4" else 0.0
 
 
