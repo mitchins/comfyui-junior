@@ -1,9 +1,14 @@
 {
-  "version": "1.0",
+  "version": "2.0",
+  "stacks": {
+    "blackwell_nvfp4": "Blackwell SM120 native NVFP4 fast path (RTX 5060 Ti class)",
+    "ampere_fp8": "Ampere+ fp8 storage with bf16 compute (RTX 3060 12GB class)"
+  },
   "models": [
     {
       "id": "flux2-klein-4b-nvfp4",
       "type": "diffusion_model",
+      "stacks": ["blackwell_nvfp4"],
       "filename": "flux-2-klein-4b-nvfp4.safetensors",
       "subfolder": "diffusion_models",
       "size_bytes": 2460413488,
@@ -16,13 +21,40 @@
     {
       "id": "qwen3-4b-fp4-flux2",
       "type": "text_encoder",
+      "stacks": ["blackwell_nvfp4"],
       "filename": "qwen_3_4b_fp4_flux2.safetensors",
       "subfolder": "text_encoders",
       "size_bytes": 3848213998,
-      "sha256": "3eab03a77adb0ee5304a4e677d5c10ac22f9049c1d7c894adca4f8bb39206ca8",
+      "sha256": "3eab03a77adb0ee5304a4e677c5d10ac22f9049c1d7c894adca4f8bb39206ca8",
       "hf_repo": "Comfy-Org/vae-text-encorder-for-flux-klein-4b",
       "hf_filename": "split_files/text_encoders/qwen_3_4b_fp4_flux2.safetensors",
       "revision": "c6ffb44d9b43b6a635fded0c5723173c4bcca257",
+      "optional": false
+    },
+    {
+      "id": "flux2-klein-4b-fp8",
+      "type": "diffusion_model",
+      "stacks": ["ampere_fp8"],
+      "filename": "flux-2-klein-4b-fp8.safetensors",
+      "subfolder": "diffusion_models",
+      "size_bytes": 4070624520,
+      "sha256": "97ed34fe0567e436200f2faee3939b88f2b5d99f8af2a4dc16532c4245c0ccb6",
+      "hf_repo": "black-forest-labs/FLUX.2-klein-4b-fp8",
+      "hf_filename": "flux-2-klein-4b-fp8.safetensors",
+      "revision": "5b4408e59397a4a37ccb46afe426d8ed86379441",
+      "optional": false
+    },
+    {
+      "id": "qwen3-4b-fp8-mixed",
+      "type": "text_encoder",
+      "stacks": ["ampere_fp8"],
+      "filename": "qwen_3_4b_fp8_mixed.safetensors",
+      "subfolder": "text_encoders",
+      "size_bytes": 5631994051,
+      "sha256": "72450b19758172c5a7273cf7de729d1c17e7f434a104a00167624cba94f68f15",
+      "hf_repo": "Comfy-Org/z_image_turbo",
+      "hf_filename": "split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
+      "revision": "08d04455279082882deaabc8d0d09fc914c071e1",
       "optional": false
     },
     {
@@ -38,31 +70,43 @@
       "optional": false
     },
     {
-      "id": "junior-safety-v7",
+      "id": "junior-safety-v29db",
       "type": "safety_classifier",
-      "filename": "v7_distilbert",
+      "filename": "v29db",
       "subfolder": "safety",
       "files": [
         "config.json",
         "heads.pt",
         "model.safetensors",
-        "tokenizer_config.json",
+        "spm.model",
+        "added_tokens.json",
+        "special_tokens_map.json",
         "tokenizer.json",
-        "vocab.txt",
-        "special_tokens_map.json"
+        "tokenizer_config.json"
       ],
       "file_digests": {
-        "config.json": "38bf07e64f517389a4103925c4304f98deebb3107035374d7d16d16d0a0aae2c",
-        "heads.pt": "5854a76b6fd761ec623cf5dd2e161d41cdff70ca7ec0806f94b03e5d4bb7a2d1",
-        "model.safetensors": "ccfdaab81bf5f92688ee04143e3245000f6a3ea69d9db93ba5086d4ee30228db",
-        "special_tokens_map.json": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3",
-        "tokenizer_config.json": "a3c9410f27554c6e26af779fd147e536c6c5f9e5cb0e6b8f38ddaa25e1b0f6af",
-        "tokenizer.json": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
-        "vocab.txt": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+        "added_tokens.json": "dc046d04c9b0ada7ae6f1dc89c465801799acdf0c9a6aab8c15a1b2d5ca4e91f",
+        "config.json": "953a0e2ad4530f20510b3ef94ea521dbc1f41ce75501751a99438c8cebaa70f3",
+        "heads.pt": "d1d0b6f92c0dca4e3512739e7a26cb190fafd103b2d6056735c6ab8de5016ea9",
+        "model.safetensors": "5129545204d1c9ca8700369db1b055a9baac548c97dfc55140b8517cb538575e",
+        "special_tokens_map.json": "9463f61e1b109a8eb4688b829260d7c6b1e6dff04c98ff7269bb89e2b92369b9",
+        "spm.model": "c679fbf93643d19aab7ee10c0b99e460bdbc02fedf34b92b05af343b4af586fd",
+        "tokenizer.json": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+        "tokenizer_config.json": "e6c4c771911c211618a2d46488dc7e9e499f051773cd4ff4faeca6fe55fdf569"
       },
       "hf_repo": "Mitchins/comfyui-junior-safety",
-      "revision": "8969dc6b8f479b2048df5ca11290b22651903a51",
+      "revision": "a377d25017065db0ec5b8a7b6a2d11a30a906d5b",
       "sha256": null,
+      "optional": false
+    },
+    {
+      "id": "fasttext-lid176",
+      "type": "language_model",
+      "filename": "lid.176.bin",
+      "subfolder": "safety",
+      "size_bytes": 131266198,
+      "sha256": "7e69ec5451bc261cc7844e49e4792a85d7f09c06789ec800fc4a44aec362764e",
+      "url": "https://github.com/facebookresearch/fastText/releases/download/v0.9.2/lid.176.bin",
       "optional": false
     }
   ]

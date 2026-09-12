@@ -64,11 +64,17 @@ def ensure_model_assets(
     safety_hf_repo: Optional[str] = None,
     safety_hf_revision: Optional[str] = None,
     verify_hashes: bool = False,
-    dry_run: bool = False
+    dry_run: bool = False,
+    stack: Optional[str] = None,
 ) -> Dict[str, bool]:
     """
     Checks and idempotently ensures all required models exist on disk.
     If comfy_dir has a models/ folder, ensures symlinks/paths are aligned.
+
+    Args:
+        stack: active image stack id. Manifest entries carrying a "stacks"
+            list are skipped unless it contains this value; entries without
+            the field (VAE, safety, language models) are stack-independent.
     """
     manifest = load_manifest()
     models = manifest.get("models", [])
@@ -78,6 +84,10 @@ def ensure_model_assets(
     comfy_models_root = comfy_dir / "models"
 
     for model_info in models:
+        model_stacks = model_info.get("stacks")
+        if stack and model_stacks and stack not in model_stacks:
+            logger.info("Skipping model '%s' (not part of stack '%s')", model_info.get("id"), stack)
+            continue
         model_id = model_info.get("id")
         model_type = model_info.get("type")
         subfolder = model_info.get("subfolder", "")
@@ -138,57 +148,80 @@ def ensure_model_assets(
                 results[model_id] = False
                 continue
 
-            if not hf_repo:
+            direct_url = model_info.get("url")
+
+            if not hf_repo and not direct_url:
                 if is_optional:
-                    logger.warning("Optional model '%s' not present locally and no HF repo provided.", model_id)
+                    logger.warning("Optional model '%s' not present locally and no source provided.", model_id)
                     results[model_id] = False
                     continue
                 else:
-                    raise FileNotFoundError(f"Required model '{model_id}' missing and no HF repository defined.")
+                    raise FileNotFoundError(f"Required model '{model_id}' missing and no HF repository or URL defined.")
 
-            logger.info("Downloading model '%s' from %s (revision: %s)...", model_id, hf_repo, revision)
-            try:
-                from huggingface_hub import hf_hub_download, snapshot_download
+            if direct_url and not hf_repo:
+                logger.info("Downloading model '%s' from %s...", model_id, direct_url)
+                try:
+                    import urllib.request
+                    tmp_target = target_file.with_suffix(target_file.suffix + ".part")
+                    with urllib.request.urlopen(direct_url, timeout=60.0) as resp, open(tmp_target, "wb") as out_f:
+                        shutil.copyfileobj(resp, out_f, length=1024 * 1024 * 8)
+                    tmp_target.rename(target_file)
+                    if expected_sha256 and not verify_file_sha256(target_file, expected_sha256):
+                        target_file.unlink(missing_ok=True)
+                        raise ValueError(f"Downloaded model '{model_id}' failed SHA-256 validation.")
+                    results[model_id] = True
+                    logger.info("Successfully acquired model '%s'", model_id)
+                except Exception as e:
+                    if is_optional:
+                        logger.warning("Optional model '%s' download skipped/failed: %s", model_id, e)
+                        results[model_id] = False
+                    else:
+                        logger.error("Failed to download required model '%s': %s", model_id, e)
+                        raise
+            else:
+                logger.info("Downloading model '%s' from %s (revision: %s)...", model_id, hf_repo, revision)
+                try:
+                    from huggingface_hub import hf_hub_download, snapshot_download
 
-                if expected_files:
-                    # Directory download with explicit pattern whitelist
-                    snapshot_download(
-                        repo_id=hf_repo,
-                        revision=revision or None,
-                        local_dir=str(target_file),
-                        allow_patterns=expected_files,
-                        token=hf_token or None
-                    )
-                    # Verify all expected files and digests are present
-                    if not verify_directory_assets(target_file, expected_files, file_digests, verify_hashes=True):
-                        shutil.rmtree(target_file, ignore_errors=True)
-                        raise ValueError(f"Downloaded directory model '{model_id}' failed integrity validation at {target_file}")
-                else:
-                    # Single file download
-                    downloaded_path = hf_hub_download(
-                        repo_id=hf_repo,
-                        filename=hf_filename or filename,
-                        revision=revision or None,
-                        token=hf_token or None
-                    )
-                    # Move/copy to target
-                    if not target_file.exists():
-                        shutil.copy2(downloaded_path, target_file)
+                    if expected_files:
+                        # Directory download with explicit pattern whitelist
+                        snapshot_download(
+                            repo_id=hf_repo,
+                            revision=revision or None,
+                            local_dir=str(target_file),
+                            allow_patterns=expected_files,
+                            token=hf_token or None
+                        )
+                        # Verify all expected files and digests are present
+                        if not verify_directory_assets(target_file, expected_files, file_digests, verify_hashes=True):
+                            shutil.rmtree(target_file, ignore_errors=True)
+                            raise ValueError(f"Downloaded directory model '{model_id}' failed integrity validation at {target_file}")
+                    else:
+                        # Single file download
+                        downloaded_path = hf_hub_download(
+                            repo_id=hf_repo,
+                            filename=hf_filename or filename,
+                            revision=revision or None,
+                            token=hf_token or None
+                        )
+                        # Move/copy to target
+                        if not target_file.exists():
+                            shutil.copy2(downloaded_path, target_file)
 
-                    if expected_sha256:
-                        if not verify_file_sha256(target_file, expected_sha256):
-                            target_file.unlink(missing_ok=True)
-                            raise ValueError(f"Downloaded model '{model_id}' failed SHA-256 validation.")
+                        if expected_sha256:
+                            if not verify_file_sha256(target_file, expected_sha256):
+                                target_file.unlink(missing_ok=True)
+                                raise ValueError(f"Downloaded model '{model_id}' failed SHA-256 validation.")
 
-                results[model_id] = True
-                logger.info("Successfully acquired model '%s'", model_id)
-            except Exception as e:
-                if is_optional:
-                    logger.warning("Optional model '%s' download skipped/failed: %s", model_id, e)
-                    results[model_id] = False
-                else:
-                    logger.error("Failed to download required model '%s': %s", model_id, e)
-                    raise
+                    results[model_id] = True
+                    logger.info("Successfully acquired model '%s'", model_id)
+                except Exception as e:
+                    if is_optional:
+                        logger.warning("Optional model '%s' download skipped/failed: %s", model_id, e)
+                        results[model_id] = False
+                    else:
+                        logger.error("Failed to download required model '%s': %s", model_id, e)
+                        raise
 
         # Ensure ComfyUI models directory points to the model
         if comfy_models_root.exists() and subfolder and target_file.exists():

@@ -1,209 +1,289 @@
-import os
-import time
+"""ComfyUI Junior public service: OpenAI-compatible API + Imagine frontend.
+
+Request flow (appliance mode, unconditional):
+
+    request -> style template (explicit allowlist)
+            -> well-formedness gate        (prompt_format_invalid)
+            -> English-envelope gate       (unsupported_language)
+            -> FP16 v29db classifier       (content_policy_violation)
+            -> policy_v6 PASS -> generation
+
+No request field, header, or query parameter can weaken the prompt gates. The
+classifier is a hard startup dependency; failures fail closed.
+
+Evaluation instances (``JUNIOR_EVALUATION_INSTANCE=1``, an owner-operated
+infrastructure-level decision made at process start) swap in the evaluation
+bypass gate: generation is unfiltered by design so the owner can measure the
+model externally, the child frontend is disabled, and ``/health`` reports
+``role=evaluation``. The request-handler code path is identical in both
+modes.
+"""
 import base64
 import logging
+import os
+import time
 from contextlib import asynccontextmanager
-from typing import Optional, List, Dict, Any
-from pathlib import Path
+from typing import List, Optional
 
-from fastapi import FastAPI, Request, status
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from comfyui_junior.config import settings
-from comfyui_junior.safety import SafetyFilter, SafetyResult
+from comfyui_junior.classifier import JuniorSafetyClassifier
 from comfyui_junior.comfy import ComfyClient
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+from comfyui_junior.config import settings
+from comfyui_junior.pipeline import (
+    FAILURE_LANGUAGE,
+    FAILURE_POLICY,
+    FAILURE_PROMPT_FORMAT,
+    EvaluationBypassGate,
+    GateResult,
+    ProductionGate,
 )
-logger = logging.getLogger("comfyui_junior.app")
+from comfyui_junior.styles import apply_style_template
 
-# Global singleton instances
-safety_filter: Optional[SafetyFilter] = None
-comfy_client: Optional[ComfyClient] = None
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("comfyui_junior")
+
+STATIC_DIR = settings.PACKAGE_ROOT / "static"
+
+production_gate = None
+comfy_client = None
+
+
+def _detect_compute_capability():
+    """Return the CUDA compute capability, or ``None`` in GPU-less contexts."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_capability(0)
+    except Exception:
+        return None
+    return None
+
+
+STACK = settings.resolve_stack(_detect_compute_capability())
+
+
+def openai_error(message: str, code: str, param: Optional[str] = None,
+                 status_code: int = 400, extra: Optional[dict] = None) -> JSONResponse:
+    """Build an OpenAI-style error response.
+
+    Args:
+        message: human-readable message shown to clients.
+        code: machine-readable error code.
+        param: offending request parameter, when known.
+        status_code: HTTP status code.
+        extra: additional top-level fields (e.g. safety decision details).
+
+    Returns:
+        A ``JSONResponse`` in the OpenAI error envelope shape.
+    """
+    body = {"error": {
+        "message": message,
+        "type": "invalid_request_error" if status_code < 500 else "server_error",
+        "param": param, "code": code,
+    }}
+    if extra:
+        body.update(extra)
+    return JSONResponse(status_code=status_code, content=body)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global safety_filter, comfy_client
-    logger.info("Starting ComfyUI Junior service...")
-    
-    # 1. Initialize Safety Filter if enabled
-    if settings.SAFETY_ENABLED:
-        safety_path = Path(settings.SAFETY_MODEL_PATH)
-        logger.info("Loading SafetyFilter from %s on %s...", safety_path, settings.SAFETY_DEVICE)
-        try:
-            safety_filter = SafetyFilter(model_dir=safety_path, device=settings.SAFETY_DEVICE)
-        except Exception as e:
-            logger.critical("FATAL: Failed to initialize SafetyFilter: %s", e)
-            raise RuntimeError(f"SafetyFilter initialization failed: {e}")
+    """Startup/shutdown: resolve the stack, load the gate and backend client.
+
+    In appliance mode the FP16 v29db classifier is a hard dependency: if it
+    cannot load on CUDA the service refuses to start. Evaluation instances
+    inject the deliberate bypass gate instead and disable the frontend.
+    """
+    global production_gate, comfy_client
+
+    if settings.JUNIOR_EVALUATION_INSTANCE:
+        production_gate = EvaluationBypassGate()
+        logger.warning("=" * 64)
+        logger.warning(" EVALUATION INSTANCE: prompt filtering DISABLED by owner")
+        logger.warning(" configuration (JUNIOR_EVALUATION_INSTANCE=1). This")
+        logger.warning(" process is an unfiltered measurement endpoint and must")
+        logger.warning(" never be exposed as the children's appliance.")
+        logger.warning("=" * 64)
     else:
-        logger.warning("****************************************************************")
-        logger.warning(" [WARNING] SAFETY_ENABLED=0: Running in UNPROTECTED BYPASS MODE! ")
-        logger.warning("****************************************************************")
-        
-    # 2. Initialize Comfy Client
+        classifier = JuniorSafetyClassifier(settings.SAFETY_MODEL_PATH, device=settings.SAFETY_DEVICE)
+        if str(classifier.dtype) != "torch.float16" or "cuda" not in str(classifier.device):
+            raise RuntimeError("production classifier must be FP16 on CUDA — refusing to start")
+        production_gate = ProductionGate(classifier)
+
     try:
-        comfy_client = ComfyClient(base_url=settings.comfy_base_url, workflow_path=settings.WORKFLOW_PATH)
+        comfy_client = ComfyClient(
+            base_url=settings.comfy_base_url,
+            workflow_path=str(settings.workflow_path(STACK)),
+            quality_steps=settings.QUALITY_STEPS.get(STACK),
+        )
         if comfy_client.check_health():
-            logger.info("Successfully connected to ComfyUI backend at %s", settings.comfy_base_url)
+            logger.info("Connected to ComfyUI backend at %s (stack=%s)", settings.comfy_base_url, STACK)
         else:
-            logger.warning("ComfyUI backend at %s is not yet reachable (will retry per request)", settings.comfy_base_url)
+            logger.warning("ComfyUI backend not reachable yet (will retry per request)")
     except Exception as e:
-        logger.critical("FATAL: Failed to initialize ComfyClient: %s", e)
-        raise RuntimeError(f"ComfyClient initialization failed: {e}")
-        
+        logger.critical("FATAL: ComfyClient init failed: %s", e)
+        raise
+
+    # Warm the language gate so the first request does not pay load cost.
+    from comfyui_junior import langgate
+    try:
+        langgate.check("a warm up prompt for the language gate")
+    except Exception:
+        logger.warning("language gate warm-up skipped (lid.176 not present yet)")
+
+    logger.info("comfyui_junior up (role=%s, stack=%s)",
+                "evaluation" if settings.JUNIOR_EVALUATION_INSTANCE else "appliance", STACK)
     yield
-    logger.info("Shutting down ComfyUI Junior service...")
+    logger.info("shutting down comfyui_junior")
 
-app = FastAPI(
-    title="ComfyUI Junior",
-    version="0.1.0",
-    description="OpenAI-compatible safe image generation appliance powered by FLUX.2 Klein NVFP4",
-    lifespan=lifespan
-)
 
-# Mount static files
-if settings.STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(settings.STATIC_DIR)), name="static")
+app = FastAPI(title="ComfyUI Junior - Safe Image Proxy", version="2.0.0", lifespan=lifespan)
+
+if not settings.JUNIOR_EVALUATION_INSTANCE and STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 @app.get("/")
 def serve_index():
-    index_path = settings.STATIC_DIR / "index.html"
+    """Serve the Imagine studio (appliance) or an evaluation notice (eval)."""
+    if settings.JUNIOR_EVALUATION_INSTANCE:
+        return JSONResponse({
+            "role": "evaluation",
+            "message": "Evaluation instance: prompt filtering is disabled by owner "
+                       "configuration and the frontend is unavailable. Use "
+                       "POST /v1/images/generations for unfiltered measurement.",
+        })
+    index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(str(index_path))
-    return {"message": "ComfyUI Junior Appliance Running"}
+    return {"message": "ComfyUI Junior API running"}
+
 
 class ImageGenerationRequest(BaseModel):
-    prompt: str = Field(..., description="A text description of the desired image(s).")
-    model: Optional[str] = Field(default=settings.PUBLIC_MODEL_NAME, description="The model to use.")
-    n: Optional[int] = Field(default=1, ge=1, le=1, description="Number of images to generate (currently fixed to 1).")
-    size: Optional[str] = Field(default="1024x1024", description="Image resolution (e.g. 1024x1024, 768x1024).")
-    response_format: Optional[str] = Field(default="b64_json", description="The format in which the generated images are returned.")
+    """OpenAI-compatible image generation request.
+
+    NOTE: no field can influence safety. ``style`` selects an explicit,
+    fixed template from a server-side allowlist (additive-only suffix); it
+    cannot alter gate behaviour.
+    """
+
+    model: Optional[str] = Field(default=settings.PUBLIC_MODEL_NAME)
+    n: Optional[int] = Field(default=1, ge=1, le=1)
+    prompt: str = Field(..., min_length=1, max_length=1500)
+    quality: Optional[str] = Field(default="normal", description='"normal" or "high"')
+    response_format: Optional[str] = Field(default="b64_json", description='Only "b64_json" is supported.')
+    size: Optional[str] = Field(default="1024x1024")
+    style: Optional[str] = Field(default="none", description='"none" or a named template, e.g. "colouring_sheet"')
     user: Optional[str] = None
 
-def openai_error_response(message: str, code: str, param: Optional[str] = None, status_code: int = 400, extra: Optional[dict] = None) -> JSONResponse:
-    err_body = {
-        "error": {
-            "message": message,
-            "type": "invalid_request_error" if status_code < 500 else "server_error",
-            "param": param,
-            "code": code
-        }
-    }
-    if extra:
-        err_body.update(extra)
-    return JSONResponse(status_code=status_code, content=err_body)
 
 @app.get("/health")
 def health():
-    backend_ok = comfy_client.check_health() if comfy_client else False
+    """Report service health, role, safety pipeline and backend reachability."""
     return {
-        "status": "ok" if backend_ok else "starting",
-        "safety_enabled": settings.SAFETY_ENABLED,
-        "comfy_backend_reachable": backend_ok,
-        "public_model": settings.PUBLIC_MODEL_NAME
+        "status": "ok",
+        "role": "evaluation" if settings.JUNIOR_EVALUATION_INSTANCE else "appliance",
+        "gates": "disabled-by-owner (JUNIOR_EVALUATION_INSTANCE=1)"
+                 if settings.JUNIOR_EVALUATION_INSTANCE
+                 else "wellformed -> language_envelope -> v29db_fp16 -> policy_v6",
+        "classifier_dtype": str(production_gate.classifier.dtype) if production_gate and hasattr(production_gate, "classifier") else None,
+        "policy": "policy_v6" if not settings.JUNIOR_EVALUATION_INSTANCE else "evaluation-bypass",
+        "stack": STACK,
+        "comfy_backend_reachable": comfy_client.check_health() if comfy_client else False,
+        "public_model": settings.PUBLIC_MODEL_NAME,
     }
+
 
 @app.get("/v1/models")
 def list_models():
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": settings.PUBLIC_MODEL_NAME,
-                "object": "model",
-                "created": 1770000000,
-                "owned_by": "comfyui-junior"
-            }
-        ]
-    }
+    """List the single public model id in the OpenAI listing shape."""
+    return {"object": "list", "data": [{
+        "id": settings.PUBLIC_MODEL_NAME,
+        "object": "model",
+        "created": 1770000000,
+        "owned_by": "comfy-appliance",
+    }]}
+
 
 @app.post("/v1/images/generations")
 def generate_images(req: ImageGenerationRequest):
-    # 1. Validate Model
+    """Generate one image after validation and the prompt-safety pipeline."""
+    # 1. model / size / quality / style validation (none of this touches safety)
     if req.model and req.model != settings.PUBLIC_MODEL_NAME:
-        return openai_error_response(
-            message=f"The model '{req.model}' does not exist. Supported model: '{settings.PUBLIC_MODEL_NAME}'",
-            code="model_not_found",
-            param="model",
-            status_code=400
-        )
-        
-    # 2. Validate Size
+        return openai_error(
+            f"The model '{req.model}' does not exist. Supported model: '{settings.PUBLIC_MODEL_NAME}'",
+            "model_not_found", "model", 400)
+    if req.response_format not in (None, "b64_json"):
+        return openai_error("Only response_format='b64_json' is supported.",
+                            "invalid_response_format", "response_format", 400)
     try:
         parts = req.size.lower().split("x")
         if len(parts) != 2:
-            raise ValueError()
-        width = int(parts[0])
-        height = int(parts[1])
-        if width <= 0 or height <= 0 or width > 2048 or height > 2048:
-            raise ValueError()
-    except Exception:
-        return openai_error_response(
-            message=f"Invalid size '{req.size}'. Supported format: 'WIDTHxHEIGHT' (e.g. 1024x1024)",
-            code="invalid_size",
-            param="size",
-            status_code=400
-        )
-        
-    # 3. Inline Safety Filter
-    if settings.SAFETY_ENABLED:
-        if safety_filter is None:
-            logger.error("SafetyFilter not initialized when SAFETY_ENABLED=1")
-            return openai_error_response("Safety filter service unavailable", "server_error", status_code=500)
-            
-        try:
-            res: SafetyResult = safety_filter.classify(req.prompt)
-        except Exception as e:
-            logger.error("Safety classification error: %s (failing closed)", e)
-            return openai_error_response("Safety classification failed; request blocked", "server_error", status_code=500)
-            
-        logger.info("Safety result for '%s...': %s in %.1fms (reasons=%s)", req.prompt[:40], res.decision, res.latency_ms, res.reasons)
-        
-        if res.decision == "BLOCK":
-            return openai_error_response(
-                message=f"Prompt rejected by content safety policy: {', '.join(res.reasons) if res.reasons else 'prohibited content'}",
-                code="content_policy_violation",
-                param="prompt",
-                status_code=400,
-                extra={"safety_decision": "BLOCK", "reasons": res.reasons}
-            )
-        elif res.decision == "ROUTE":
-            return openai_error_response(
-                message=f"Prompt requires additional safety review: {', '.join(res.reasons)}",
-                code="safety_route_required",
-                param="prompt",
-                status_code=400,
-                extra={"safety_decision": "ROUTE", "reasons": res.reasons}
-            )
-    else:
-        logger.warning("[SAFETY BYPASS] Generating prompt directly without safety check: '%s...'", req.prompt[:40])
-        
-    # 4. Submit to ComfyUI
+            raise ValueError
+        width, height = int(parts[0]), int(parts[1])
+        # Product surface is 16..1344 per side and a multiple of 16 (the
+        # frontend offers 768/1024/1344). Larger latents are rejected at the
+        # API boundary so the measured GPU working set cannot be exceeded by
+        # request shape.
+        if not (16 <= width <= 1344 and 16 <= height <= 1344) or width % 16 or height % 16:
+            raise ValueError
+    except ValueError:
+        return openai_error(
+            "Invalid size. Supported format: 'WIDTHxHEIGHT' with each side a "
+            "multiple of 16 between 16 and 1344 (e.g. 1024x1024).",
+            "invalid_size", "size", 400)
+    if req.quality not in ("normal", "high"):
+        return openai_error("quality must be 'normal' or 'high'", "invalid_quality", "quality", 400)
+
+    # 2. Explicit style template (fixed allowlist; no implicit rewriting).
+    #    Expanded BEFORE the gates so the classifier judges the exact text
+    #    that will be rendered.
+    try:
+        render_prompt, style_template = apply_style_template(req.prompt, req.style)
+    except ValueError as e:
+        return openai_error(str(e), "invalid_style", "style", 400)
+    if style_template:
+        logger.info("style template applied (%s)", style_template)
+    steps = settings.QUALITY_STEPS.get(STACK, {}).get(req.quality)
+
+    # 3. UNCONDITIONAL prompt-safety pipeline (or the evaluation bypass on
+    #    evaluation instances). No flag, parameter, header, or request field
+    #    can skip or weaken the appliance-mode gates.
+    if production_gate is None:
+        return openai_error("Safety pipeline unavailable; request refused", "server_error", status_code=500)
+    result: GateResult = production_gate.check(render_prompt)
+    if not result.ok:
+        friendly = {
+            FAILURE_PROMPT_FORMAT: "Hmm, we couldn't read that. Please write your idea in normal words and letters.",
+            FAILURE_LANGUAGE: "Sorry! We can only understand English right now. Try writing your idea in English.",
+            FAILURE_POLICY: "That idea isn't something we can make a picture of. Try a different, friendlier idea!",
+        }.get(result.failure_code, "We can't use that prompt.")
+        logger.info("gate rejected (code=%s gate=%s): %.60r", result.failure_code, result.gate, req.prompt)
+        return openai_error(friendly, result.failure_code or FAILURE_POLICY, "prompt", 400,
+                            extra={"safety_failure_code": result.failure_code, "gate": result.gate})
+    logger.info("gate %s (%.1fms): %.60r", result.gate,
+                result.classification.latency_ms if result.classification else -1, render_prompt)
+
+    # 4. Generation.
     if comfy_client is None:
-        return openai_error_response("ComfyUI client not initialized", "server_error", status_code=500)
-        
+        return openai_error("Backend client unavailable", "server_error", status_code=500)
     try:
         img_bytes, gen_latency = comfy_client.generate_image(
-            prompt=req.prompt,
-            width=width,
-            height=height
-        )
+            prompt=render_prompt, width=width, height=height, steps=steps)
     except Exception as e:
-        logger.error("Image generation backend failed: %s", e, exc_info=True)
-        return openai_error_response("Image generation failed due to a backend error", "backend_error", status_code=502)
-        
-    b64_data = base64.b64encode(img_bytes).decode("utf-8")
-    
+        logger.error("backend generation failed: %s", e)
+        return openai_error(f"Backend generation failed: {e}", "backend_error", status_code=502)
+
     return {
         "created": int(time.time()),
-        "data": [
-            {
-                "b64_json": b64_data,
-                "revised_prompt": req.prompt
-            }
-        ]
+        "data": [{
+            "b64_json": base64.b64encode(img_bytes).decode("utf-8"),
+            "revised_prompt": render_prompt,
+        }],
+        "meta": {"generation_latency_s": round(gen_latency, 3), "quality": req.quality,
+                 "style_template": style_template},
     }
