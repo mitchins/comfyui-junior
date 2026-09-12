@@ -195,6 +195,29 @@ class TestComfyNodeResolution(unittest.TestCase):
                                           {"Location": https_target}, https_target)
         self.assertNotIsInstance(result, ValueError)
 
+    def test_remote_workflow_uses_opener_open(self):
+        """Remote loads go through opener.open(url, timeout=...) — the supported call."""
+        import io
+        import unittest.mock
+
+        valid = json.dumps({
+            "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "x"}},
+            "2": {"class_type": "EmptyLatentImage", "inputs": {}},
+            "3": {"class_type": "KSampler", "inputs": {}},
+        }).encode("utf-8")
+
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+        opener = unittest.mock.MagicMock()
+        opener.open.return_value = _Resp(valid)
+        with unittest.mock.patch("comfyui_junior.comfy._https_only_opener", return_value=opener):
+            client = ComfyClient(base_url="http://127.0.0.1:8188",
+                                 workflow_path="https://example.com/workflow.json")
+        opener.open.assert_called_once_with("https://example.com/workflow.json", timeout=10.0)
+        self.assertEqual(client._roles["text"], "1")
+
 
 class TestWorkflowValidation(unittest.TestCase):
     """Both packaged workflows contain the required tiled-decode graph."""

@@ -73,8 +73,9 @@ class ComfyClient:
             # https:// is accepted. Local paths remain the default.
             if not workflow_path.startswith("https://"):
                 raise ValueError("remote workflow sources must use https:// (plaintext http is not allowed)")
-            with urllib.request.urlopen(workflow_path, timeout=10.0,
-                                        opener=_https_only_opener()) as resp:
+            # Note: urllib.request.urlopen() does not accept an opener
+            # argument; the opener's .open() is the supported entry point.
+            with _https_only_opener().open(workflow_path, timeout=10.0) as resp:
                 self.workflow_template: Dict[str, Any] = json.loads(resp.read().decode("utf-8"))
         else:
             import os
