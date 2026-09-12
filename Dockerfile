@@ -1,7 +1,7 @@
 FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04
 
 LABEL org.opencontainers.image.title="ComfyUI Junior" \
-      org.opencontainers.image.description="Opinionated image-generation appliance powered by FLUX.2 Klein and Blackwell NVFP4" \
+      org.opencontainers.image.description="Opinionated image-generation appliance powered by FLUX.2 Klein (Blackwell NVFP4 or Ampere fp8 stacks)" \
       org.opencontainers.image.authors="Mitchell Currie <mitch@mitchellcurrie.com>" \
       org.opencontainers.image.source="https://github.com/mitchins/comfyui-junior" \
       org.opencontainers.image.licenses="MIT"
@@ -14,11 +14,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MODEL_DIR="/models" \
     DATA_DIR="/data"
 
-# Install base dependencies
+# Install base dependencies (g++ needed to build the pinned fasttext wheel)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3.10-venv \
     python3.10-dev \
+    g++ \
     git \
     tini \
     curl \

@@ -13,12 +13,18 @@ services:
       - PORT=8000
       - COMFY_HOST=127.0.0.1
       - COMFY_PORT=8188
-      - COMFY_MEMORY_CAP_GIB=10.0
+      # Stack selection: auto-detects (SM120 -> blackwell_nvfp4, SM86+ -> ampere_fp8).
+      # Override with blackwell_nvfp4 or ampere_fp8 if needed.
+      - JUNIOR_IMAGE_STACK=auto
       - MODEL_DIR=/models
       - DATA_DIR=/data
-      - SAFETY_ENABLED=1
       - SAFETY_DEVICE=cuda:0
-      - SAFETY_MODEL_PATH=/models/safety/v7_distilbert
+      - SAFETY_MODEL_PATH=/models/safety/v29db
+      # Owner-operated evaluation instance (UNFILTERED by design, frontend
+      # disabled). Deliberately commented out: never enable on the children's
+      # appliance. When measuring the raw model externally, run a separate
+      # container/compose project with this set to 1 bound to loopback only.
+      # - JUNIOR_EVALUATION_INSTANCE=1
     volumes:
       - ./models:/models
       - ./data:/data
