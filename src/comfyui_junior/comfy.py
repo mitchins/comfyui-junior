@@ -28,6 +28,28 @@ _OVERRIDE_ROLES = {
 }
 
 
+class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that refuses any downgrade away from HTTPS.
+
+    urllib follows redirects by default, so an accepted ``https://`` workflow
+    URL could otherwise be answered with a 30x to a plaintext ``http://``
+    source. Every redirect target must itself be HTTPS; anything else raises.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        parsed = urllib.parse.urlsplit(newurl)
+        if parsed.scheme != "https":
+            raise ValueError(
+                f"workflow redirect refused: {newurl!r} is not HTTPS (downgrade blocked)"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _https_only_opener() -> urllib.request.OpenerDirector:
+    """Build a URL opener that follows only HTTPS-to-HTTPS redirects."""
+    return urllib.request.build_opener(_HTTPSOnlyRedirectHandler)
+
+
 class ComfyClient:
     """Submits the packaged workflow to ComfyUI and retrieves the PNG bytes."""
 
@@ -51,7 +73,8 @@ class ComfyClient:
             # https:// is accepted. Local paths remain the default.
             if not workflow_path.startswith("https://"):
                 raise ValueError("remote workflow sources must use https:// (plaintext http is not allowed)")
-            with urllib.request.urlopen(workflow_path, timeout=10.0) as resp:
+            with urllib.request.urlopen(workflow_path, timeout=10.0,
+                                        opener=_https_only_opener()) as resp:
                 self.workflow_template: Dict[str, Any] = json.loads(resp.read().decode("utf-8"))
         else:
             import os

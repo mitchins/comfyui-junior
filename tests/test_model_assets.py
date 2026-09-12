@@ -175,6 +175,26 @@ class TestComfyNodeResolution(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             ComfyClient(base_url="http://127.0.0.1:8188", workflow_path="ftp://example.com/wf.json")
 
+    def test_workflow_redirects_cannot_downgrade_to_http(self):
+        """HTTPS workflow URLs may not be redirected to plaintext targets."""
+        from urllib.request import Request
+
+        from comfyui_junior.comfy import _HTTPSOnlyRedirectHandler
+
+        handler = _HTTPSOnlyRedirectHandler()
+        req = Request("https://example.com/workflow.json")
+        headers = {"Location": "http://attacker.example/workflow.json"}
+        with self.assertRaises(ValueError) as ctx:
+            handler.redirect_request(req, None, 302, "Found", headers, headers["Location"])
+        self.assertIn("not HTTPS", str(ctx.exception))
+
+        # HTTPS-to-HTTPS redirects are delegated to the normal handler flow
+        # (returns a request object or None, but never raises for scheme).
+        https_target = "https://cdn.example.com/workflow.json"
+        result = handler.redirect_request(req, None, 302, "Found",
+                                          {"Location": https_target}, https_target)
+        self.assertNotIsInstance(result, ValueError)
+
 
 class TestWorkflowValidation(unittest.TestCase):
     """Both packaged workflows contain the required tiled-decode graph."""
