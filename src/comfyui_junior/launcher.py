@@ -1,3 +1,15 @@
+"""Appliance supervisor: hardware contract, model provisioning, ComfyUI child.
+
+Resolved duties:
+
+1. enforce the stack-aware hardware contract (``blackwell_nvfp4`` requires
+   SM120; ``ampere_fp8`` requires SM86 or newer);
+2. resolve ``JUNIOR_IMAGE_STACK`` (auto-detecting from the GPU when unset) and
+   export the resolved value so the application sees an explicit stack;
+3. verify/provision the stack's model assets from the pinned manifest;
+4. optionally enforce the PyTorch caching-allocator ceiling;
+5. supervise the internal ComfyUI process and run the FastAPI application.
+"""
 import os
 import sys
 import time
@@ -18,42 +30,92 @@ logging.basicConfig(
 )
 logger = logging.getLogger("comfyui_junior.launcher")
 
-def check_hardware_environment():
+
+def detect_compute_capability():
+    """Return the CUDA compute capability tuple, or ``None`` without CUDA."""
+    if torch.cuda.is_available():
+        return torch.cuda.get_device_capability(0)
+    return None
+
+
+def resolve_stack_for_process():
+    """Resolve and export ``JUNIOR_IMAGE_STACK`` for this process.
+
+    Auto-detection is resolved once here, so every later consumer (the app,
+    the ComfyUI child) sees an explicit stack value via the environment.
+
+    Returns:
+        The resolved stack id (``blackwell_nvfp4`` or ``ampere_fp8``).
     """
-    Validates that a supported NVIDIA Blackwell GPU (SM120) is present.
-    Enforces the v1 hardware contract.
+    stack = settings.resolve_stack(detect_compute_capability())
+    os.environ["JUNIOR_IMAGE_STACK"] = stack
+    logger.info("Image stack resolved: %s", stack)
+    return stack
+
+
+def check_hardware_environment(stack: str):
+    """Enforce the per-stack hardware contract.
+
+    Args:
+        stack: resolved stack id.
+
+    Raises:
+        RuntimeError: when no CUDA GPU is present, or the GPU's compute
+            capability does not satisfy the stack (SM120 for
+            ``blackwell_nvfp4``; SM86+ for ``ampere_fp8``).
     """
     if not torch.cuda.is_available():
-        raise RuntimeError("[Hardware Check Failed] No CUDA GPU detected. Appliance requires an NVIDIA Blackwell GPU (SM120, CC 12.0) for native NVFP4 execution.")
-        
+        raise RuntimeError("[Hardware Check Failed] No CUDA GPU detected. A supported NVIDIA GPU is required.")
+
     device_name = torch.cuda.get_device_name(0)
     major, minor = torch.cuda.get_device_capability(0)
     total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-    
-    logger.info("Detected GPU: %s (Compute Capability: %d.%d, Total VRAM: %.2f GB)", device_name, major, minor, total_gb)
-    
-    if major != 12:
-        raise RuntimeError(
-            f"[Hardware Contract Violation] Device compute capability is {major}.{minor}. "
-            "ComfyUI Junior v1 strictly requires an NVIDIA Blackwell SM120 GPU (Compute Capability 12.0) for native NVFP4 express path."
-        )
-    logger.info("Blackwell SM120 architecture confirmed. Native NVFP4 fast-path active.")
 
-def apply_allocator_cap():
+    logger.info("Detected GPU: %s (Compute Capability: %d.%d, Total VRAM: %.2f GB)", device_name, major, minor, total_gb)
+
+    if stack == "blackwell_nvfp4" and major != 12:
+        raise RuntimeError(
+            f"[Hardware Contract Violation] blackwell_nvfp4 requires an NVIDIA Blackwell SM120 GPU; "
+            f"detected compute capability {major}.{minor}. Use JUNIOR_IMAGE_STACK=ampere_fp8 on this GPU."
+        )
+    if stack == "ampere_fp8" and (major < 8 or (major == 8 and minor < 6)):
+        raise RuntimeError(
+            f"[Hardware Contract Violation] ampere_fp8 requires SM86 (Ampere) or newer; "
+            f"detected compute capability {major}.{minor}."
+        )
+    logger.info("Hardware contract satisfied for stack '%s'.", stack)
+
+
+def effective_allocator_cap_gib(stack: str) -> float:
+    """Return the allocator ceiling to enforce (0 disables the ceiling).
+
+    Per-stack qualified defaults when the environment variable is unset:
+    ``blackwell_nvfp4`` keeps the historical 10.0 GiB fence; ``ampere_fp8``
+    runs uncapped (measured working set fits a 12 GB card with the API-side
+    request-shape clamp — see docs/RTX3060_QUALIFICATION.md).
     """
-    Enforces PyTorch caching-allocator ceiling before model allocations.
-    """
-    if torch.cuda.is_available() and settings.COMFY_MEMORY_CAP_GIB > 0:
+    if os.getenv("COMFY_MEMORY_CAP_GIB") is not None:
+        return float(os.environ["COMFY_MEMORY_CAP_GIB"])
+    return 10.0 if stack == "blackwell_nvfp4" else 0.0
+
+
+def apply_allocator_cap(cap_gib: float):
+    """Enforce the PyTorch caching-allocator ceiling before model allocations."""
+    if torch.cuda.is_available() and cap_gib > 0:
         total_bytes = torch.cuda.get_device_properties(0).total_memory
-        target_bytes = settings.COMFY_MEMORY_CAP_GIB * (1024 ** 3)
+        target_bytes = cap_gib * (1024 ** 3)
         fraction = min(1.0, target_bytes / total_bytes)
         torch.cuda.memory.set_per_process_memory_fraction(fraction, 0)
         logger.info(
             "Enforced PyTorch caching-allocator ceiling: fraction=%.4f (%.2f GiB limit on %.2f GiB device)",
-            fraction, settings.COMFY_MEMORY_CAP_GIB, total_bytes / (1024 ** 3)
+            fraction, cap_gib, total_bytes / (1024 ** 3)
         )
+    else:
+        logger.info("No PyTorch caching-allocator ceiling (cap=%.2f GiB)", cap_gib)
 
-def wait_for_comfy_ready(base_url: str, timeout_seconds: float = 60.0) -> bool:
+
+def wait_for_comfy_ready(base_url: str, timeout_seconds: float = 120.0) -> bool:
+    """Poll the ComfyUI backend until it answers ``/system_stats``."""
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
         try:
@@ -65,42 +127,47 @@ def wait_for_comfy_ready(base_url: str, timeout_seconds: float = 60.0) -> bool:
             time.sleep(0.5)
     return False
 
+
 def main():
+    """Run the appliance supervisor (hardware -> models -> ComfyUI -> app)."""
     logger.info("==================================================================")
-    logger.info(" Starting ComfyUI Junior Appliance (v0.1.0)")
+    logger.info(" Starting ComfyUI Junior Appliance (v2.0.0)")
     logger.info("==================================================================")
 
-    # 1. Enforce Hardware Contract
-    check_hardware_environment()
+    # 1. Resolve stack + enforce hardware contract
+    stack = resolve_stack_for_process()
+    check_hardware_environment(stack)
 
-    # 2. Model Asset Preparation
+    # 2. Model Asset Preparation (stack-filtered)
     model_dir = Path(settings.MODEL_DIR)
     comfy_dir = Path(settings.COMFY_DIR)
     safety_model_path = Path(settings.SAFETY_MODEL_PATH)
-    
-    logger.info("Verifying model assets in %s...", model_dir)
+
+    logger.info("Verifying model assets in %s (stack=%s)...", model_dir, stack)
     ensure_model_assets(
         model_dir=model_dir,
         comfy_dir=comfy_dir,
         hf_token=settings.HF_TOKEN,
         safety_model_path=safety_model_path,
-        safety_hf_repo=settings.SAFETY_HF_REPO,
-        safety_hf_revision=settings.SAFETY_HF_REVISION
+        safety_hf_repo=os.getenv("SAFETY_HF_REPO") or None,
+        safety_hf_revision=os.getenv("SAFETY_HF_REVISION") or None,
+        stack=stack
     )
 
-    # 3. Apply Caching-Allocator Ceiling in this supervisor process
-    apply_allocator_cap()
+    # 3. Apply caching-allocator ceiling in this supervisor process
+    cap_gib = effective_allocator_cap_gib(stack)
+    apply_allocator_cap(cap_gib)
 
-    # 4. Prepare ComfyUI launcher script that inherits allocator cap
+    # 4. Prepare ComfyUI launcher script that inherits the same ceiling
     comfy_script = f"""
 import os
 import sys
 import torch
 import logging
 
-if torch.cuda.is_available():
+if torch.cuda.is_available() and {cap_gib} > 0:
     total_bytes = torch.cuda.get_device_properties(0).total_memory
-    fraction = min(1.0, ({settings.COMFY_MEMORY_CAP_GIB} * (1024**3)) / total_bytes)
+    fraction = min(1.0, ({cap_gib} * (1024**3)) / total_bytes)
     torch.cuda.memory.set_per_process_memory_fraction(fraction, 0)
 
 sys.path.insert(0, '{settings.COMFY_DIR}')
@@ -129,15 +196,15 @@ finally:
     )
     logger.info("Started internal ComfyUI process (PID: %d)", comfy_proc.pid)
 
-    # 5. Wait for ComfyUI Readiness
+    # 5. Wait for ComfyUI readiness
     logger.info("Awaiting internal ComfyUI readiness at %s...", settings.comfy_base_url)
-    if not wait_for_comfy_ready(settings.comfy_base_url, timeout_seconds=120.0):
+    if not wait_for_comfy_ready(settings.comfy_base_url):
         logger.error("ComfyUI backend failed to start within timeout.")
         comfy_proc.terminate()
         sys.exit(1)
     logger.info("Internal ComfyUI is ready.")
 
-    # 6. Start Junior FastAPI Proxy with Process Supervision
+    # 6. Start the Junior FastAPI application with process supervision
     import uvicorn
     config = uvicorn.Config(
         "comfyui_junior.app:app",
@@ -168,7 +235,9 @@ finally:
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    logger.info("Starting Junior public service on %s:%d...", settings.HOST, settings.PORT)
+    logger.info("Starting Junior public service on %s:%d (role=%s)...",
+                settings.HOST, settings.PORT,
+                "evaluation" if settings.JUNIOR_EVALUATION_INSTANCE else "appliance")
     try:
         server.run()
     finally:
@@ -179,6 +248,7 @@ finally:
                 comfy_proc.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
                 comfy_proc.kill()
+
 
 if __name__ == "__main__":
     main()

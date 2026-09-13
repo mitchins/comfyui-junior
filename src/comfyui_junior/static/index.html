@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Imagine — Safe Image Studio</title>
-  <meta name="description" content="Simple, safe, high-speed local image generation appliance powered by FLUX.2 Klein and Blackwell NVFP4.">
+  <meta name="description" content="Simple, safe, high-speed local image generation appliance powered by FLUX.2 Klein.">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
   <script src="/static/vendor/alpine.min.js" defer></script>
@@ -74,6 +74,46 @@
             @click="quality = 'high'"
             id="quality-high">
             High
+          </button>
+        </div>
+
+        <!-- Picture Style -->
+        <div class="pill-group" role="group" aria-label="Picture style selection">
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :aria-pressed="styleMode === 'none'"
+            :class="{ 'active': styleMode === 'none' }" 
+            @click="styleMode = 'none'"
+            id="style-none">
+            Picture
+          </button>
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :aria-pressed="styleMode === 'real_photo'"
+            :class="{ 'active': styleMode === 'real_photo' }" 
+            @click="styleMode = 'real_photo'"
+            id="style-real-photo">
+            Real photo
+          </button>
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :aria-pressed="styleMode === 'cartoon'"
+            :class="{ 'active': styleMode === 'cartoon' }" 
+            @click="styleMode = 'cartoon'"
+            id="style-cartoon">
+            Cartoon
+          </button>
+          <button 
+            type="button" 
+            class="pill-btn" 
+            :aria-pressed="styleMode === 'colouring_sheet'"
+            :class="{ 'active': styleMode === 'colouring_sheet' }" 
+            @click="styleMode = 'colouring_sheet'"
+            id="style-colouring">
+            Colouring sheet
           </button>
         </div>
       </div>
@@ -211,17 +251,19 @@
 
       <div class="recent-grid">
         <template x-for="item in recentList" :key="item.id">
-          <button 
-            type="button"
+          <div 
             class="thumb-card" 
             :class="{ 'active': currentImage && currentImage.id === item.id }"
             @click="selectRecent(item)"
             :title="item.prompt"
-            :aria-label="'Show image for prompt: ' + item.prompt"
+            role="button"
+            tabindex="0"
+            @keydown.enter="selectRecent(item)"
+            @keydown.space.prevent="selectRecent(item)"
           >
             <img :src="item.blobUrl" :alt="item.prompt" class="thumb-img" loading="lazy" />
             <span class="thumb-badge" x-text="item.aspect ? item.aspect.charAt(0).toUpperCase() : 'S'"></span>
-          </button>
+          </div>
         </template>
       </div>
     </section>

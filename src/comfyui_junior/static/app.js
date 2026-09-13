@@ -65,14 +65,13 @@ class ImageStorage {
   }
 
   async evictOldest() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const tx = this.db.transaction([STORE_NAME], "readwrite");
       const store = tx.objectStore(STORE_NAME);
       const index = store.index("timestamp");
       const keys = [];
 
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e.target.error);
+      const settle = () => resolve(); // eviction is best-effort; never leave callers pending
 
       const cursorReq = index.openKeyCursor(null, "prev");
       cursorReq.onsuccess = (e) => {
@@ -87,9 +86,12 @@ class ImageStorage {
               store.delete(key);
             }
           }
+          resolve();
         }
       };
-      cursorReq.onerror = (e) => reject(e.target.error);
+      cursorReq.onerror = settle;
+      tx.onerror = settle;
+      tx.onabort = settle;
     });
   }
 }
@@ -153,6 +155,7 @@ document.addEventListener("alpine:init", () => {
   Alpine.data("imagineApp", () => ({
     aspect: "square",
     quality: "normal",
+    styleMode: "none",
     prompt: "",
     isGenerating: false,
     currentImage: null,
@@ -224,8 +227,9 @@ document.addEventListener("alpine:init", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt: cleanPrompt,
-            model: "flux2-klein-4b-safe",
             size: targetSize,
+            quality: this.quality,
+            style: this.styleMode,
             response_format: "b64_json",
           }),
         });
@@ -237,10 +241,16 @@ document.addEventListener("alpine:init", () => {
           const err = data.error || {};
           const code = err.code || "";
           const reasons = data.reasons || err.safety_reasons || [];
-          
+
           if (code === "content_policy_violation" || code === "safety_route_required") {
             this.errorMessage = "That idea isn't available here. Try changing the picture a little.";
             this.errorDetails = formatRestrainedReason(reasons);
+          } else if (code === "prompt_format_invalid") {
+            this.errorMessage = "Hmm, we couldn't read that. Please write your idea in normal words and letters.";
+            this.errorDetails = "Reason: text was hard to read";
+          } else if (code === "unsupported_language") {
+            this.errorMessage = "Sorry! We can only understand English right now. Try writing your idea in English.";
+            this.errorDetails = "Reason: English only";
           } else {
             this.errorMessage = "That picture couldn't be made right now. Please try again.";
             this.errorDetails = "Reason: service error";
@@ -258,11 +268,12 @@ document.addEventListener("alpine:init", () => {
         this.activeBlobUrls.add(blobUrl);
 
         const newRecord = {
-          id: `img_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           timestamp: Date.now(),
           prompt: cleanPrompt,
           aspect: this.aspect,
           quality: this.quality,
+          styleMode: this.styleMode,
           size: targetSize,
           blob: blob,
         };
@@ -297,6 +308,7 @@ document.addEventListener("alpine:init", () => {
       this.prompt = item.prompt;
       if (item.aspect) this.aspect = item.aspect;
       if (item.quality) this.quality = item.quality;
+      this.styleMode = item.styleMode || "none";
       this.errorMessage = null;
     },
 

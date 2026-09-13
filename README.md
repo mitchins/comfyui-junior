@@ -1,116 +1,123 @@
-# ComfyUI Junior ✨
+# ComfyUI Junior
 
-Opinionated, high-speed, child-safe local image generation appliance powered by **FLUX.2 Klein 4B NVFP4** and NVIDIA Blackwell SM120.
+A lightweight, high-speed, child-safe local image generation appliance powered by FLUX.2 Klein 4B, with an OpenAI-compatible API and a responsive browser frontend for phones, tablets and desktops.
 
-```
+## Architecture
+
+```text
 Browser (Phone, iPad, Desktop) / OpenWebUI
-                   │
-                   ▼  GET / (Imagine Studio) OR POST /v1/images/generations
-┌────────────────────────────────────────────────────────┐
-│ Junior Appliance Container (:8000)                     │
-│                                                        │
-│ • Responsive Imagine Frontend (Alpine.js + IndexedDB)  │
-│ • OpenAI-Compatible Image API (/v1/images/generations) │
-│ • Inline v7 DistilBERT Safety Filter (~4.1 ms)         │
-│   ├── BLOCK/ROUTE ──► 400 Refusal (0 Comfy jobs)       │
-│   └── PASS        ──► Submit to Internal ComfyUI       │
-└───────────────────────────┬────────────────────────────┘
-                            │ (127.0.0.1:8188 internal only)
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│ Internal ComfyUI Backend (fenced to 10.0 GiB cap)      │
-│ • FLUX.2 Klein 4B NVFP4 (80 scaled_mm_nvfp4/step)      │
-│ • Qwen3-4B FP4 Flux2 Text Encoder                      │
-│ • Explicit VAEDecodeTiled (512x512, overlap 64)        │
-│ • ~3.25 s warm 1024² generation (6.67 GB peak alloc)   │
-└────────────────────────────────────────────────────────┘
+                 |
+                 v  GET / (Imagine Studio) OR POST /v1/images/generations
++-----------------------------------------------------------+
+|  Junior Appliance (:8000)                                 |
+|                                                           |
+|  * Responsive Imagine Frontend (Alpine.js + IndexedDB)    |
+|  * OpenAI-Compatible Image API (/v1/images/generations)   |
+|  * Prompt Safety Pipeline (unconditional):                |
+|      well-formedness gate   -> prompt_format_invalid      |
+|      English-envelope gate  -> unsupported_language       |
+|      FP16 v29db classifier  -> content_policy_violation   |
+|      policy_v6              -> PASS only, then generate   |
++----------------------------+------------------------------+
+                             | (127.0.0.1:8188 internal only)
+                             v
++-----------------------------------------------------------+
+|  Internal ComfyUI Backend (pinned commit, no plugins)     |
+|  * Stack: blackwell_nvfp4 (SM120) or ampere_fp8 (SM86+)   |
+|  * Explicit VAEDecodeTiled (512x512, overlap 64)          |
++-----------------------------------------------------------+
 ```
-
----
 
 ## Hardware Requirements
 
-- **GPU:** NVIDIA Blackwell GPU (Compute Capability 12.0 / SM120, e.g. **RTX 5060 Ti 16 GB**)
-- **Host Drivers:** NVIDIA Display Driver >= `595.71.05`, NVIDIA Container Toolkit
-- **Docker:** Docker Engine with GPU support
+Two qualified hardware stacks are supported, selected automatically from the detected GPU (or explicitly via `JUNIOR_IMAGE_STACK`):
 
-> [!NOTE]
-> v1 targets the Blackwell SM120 native NVFP4 fast-path. Execution on older GPU architectures is not supported in this release.
+| Stack | GPU requirement | Example | Warm 1024x1024 (normal) |
+| --- | --- | --- | --- |
+| `blackwell_nvfp4` | NVIDIA Blackwell SM120 (CC 12.0) | RTX 5060 Ti 16 GB | ~3.3 s |
+| `ampere_fp8` | NVIDIA Ampere SM86 or newer (CC >= 8.6) | RTX 3060 12 GB | ~9.2 s |
 
----
+Host prerequisites: NVIDIA display driver >= 595.71.05 and (for the Docker path) the NVIDIA Container Toolkit.
 
 ## Quick Start (Docker)
-
-Run the appliance with Docker Compose:
 
 ```bash
 docker compose up -d
 ```
 
-Open your browser:
-👉 **`http://localhost:8000/`**
+Then open http://localhost:8000/ .
 
-### Volume Mounts & Model Acquisition
-- `./models`: Models are stored persistently on the host and verified idempotently on startup.
+### Volume Mounts and Model Acquisition
+
+- `./models`: models are stored persistently on the host and verified idempotently on startup (immutable revisions and SHA-256 digests pinned in `config/models.json`).
 - `./data`: ComfyUI runtime and temporary output directory.
-- **Zero models in Docker layers:** The Docker image builds with 0 model downloads. Missing public models are fetched automatically at runtime.
+- Zero models in Docker layers: the image builds with no model downloads. Missing public models for the selected stack are fetched and digest-verified at runtime.
 
----
+## Features and Interfaces
 
-## Features & Interfaces
+### Imagine Web Studio (GET /)
 
-### 1. Imagine Web Studio (`GET /`)
-- **Clean & Responsive:** Optimized for iPhone, iPad, and desktop with 48px touch targets, iOS safe-area handling, and Safari toolbar padding.
-- **Client IndexedDB:** Caches the latest 20 generated pictures locally in your browser.
-- **Zero External CDN Dependencies:** Bundles vendored Alpine.js for offline LAN operation.
-- **Restrained Child-Friendly Error States:** Returns friendly guidance (*"That idea isn't available here. Try changing the picture a little."*) without leaking raw backend errors.
+- Clean and responsive: 48 px touch targets, iOS safe-area handling, Safari toolbar padding, zero external CDN dependencies (vendored Alpine.js).
+- Local IndexedDB history of the latest 20 pictures.
+- Portrait / square / landscape, normal / high quality, and explicit style templates: Picture, Real photo, Cartoon, Colouring sheet.
+- Restrained child-friendly error states for the three public failure codes (scrambled text, English-only, content policy) without leaking backend internals.
 
-### 2. OpenAI-Compatible API (`POST /v1/images/generations`)
-Connect OpenWebUI, scripts, or any OpenAI client:
-- **Base URL:** `http://<HOST_IP>:8000/v1`
-- **Model:** `flux2-klein-4b-safe`
+### OpenAI-Compatible API (POST /v1/images/generations)
 
-Example `curl` request:
 ```bash
 curl -X POST http://localhost:8000/v1/images/generations \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "A cute penguin astronaut looking at Earth",
-    "model": "flux2-klein-4b-safe",
+    "model": "flux2-klein-safe",
     "size": "1024x1024",
+    "style": "none",
+    "quality": "normal",
     "response_format": "b64_json"
   }' | jq '.data[0].b64_json' -r | base64 -d > penguin.png
 ```
 
-### 3. Inline Semantic Safety Boundary
-- **Architecture:** `DistilBertModel` with 6 continuous regression heads (`sexual`, `nudity`, `violence_gore`, `substances`, `disturbing`, `fetish`).
-- **Performance:** **~4.1 ms** latency, **254 MB VRAM**.
-- **Zero Submissions on Rejection:** Prompts triggering `BLOCK` or `ROUTE` policies return HTTP 400 immediately and submit 0 jobs to ComfyUI.
+Request fields: `prompt` (1-1500 characters; prompts that cannot be fully classified after style expansion - including over-length ones - are rejected fail-closed with `prompt_format_invalid`), `size` (each side a multiple of 16 between 16 and 1344), `quality` (`normal`|`high`), `style` (`none`|`real_photo`|`cartoon`|`colouring_sheet`; explicit allowlist, reported back as `revised_prompt` and `meta.style_template`).
 
----
+### Prompt Safety Pipeline (unconditional)
+
+Three deterministic stages run on every appliance-mode request and no flag, parameter, header or environment toggle can weaken them:
+
+1. **Well-formedness gate** - rejects obfuscated input (leet, homoglyphs, spaced-out words, zero-width characters) with `prompt_format_invalid`.
+2. **English-envelope gate** - fastText `lid.176` refuses confidently non-English input with `unsupported_language`. The product promises English only and makes no multilingual-moderation claim.
+3. **v29db classifier** - DeBERTa-v3-base with six cumulative-logit ordinal heads (sexual, nudity, violence_gore, substances, disturbing, fetish), served in FP16 on CUDA, deciding binary PASS/BLOCK under policy_v6. Artifact pinned to an immutable revision and re-verified against manifest digests at load; failures fail closed with zero ComfyUI submissions.
+
+## Owner-Operated Evaluation Instances
+
+For external measurement of the raw model (for example, gauging safety false positives/negatives with your own judge), an owner may deliberately launch an unfiltered evaluation instance. This is an infrastructure-level decision made at process start:
+
+```bash
+JUNIOR_EVALUATION_INSTANCE=1 docker compose ... # separate project, loopback binding recommended
+```
+
+Effects: prompt filtering is disabled by design, the child frontend is replaced by an API-only notice, startup logs a loud banner, and `/health` reports `"role": "evaluation"`. The request-handler code path is identical to appliance mode; only the injected gate differs. Never expose such an instance as the children's appliance.
 
 ## Configuration Reference
 
-Configure via `.env` or container environment variables:
-
 | Variable | Default | Description |
-| :--- | :--- | :--- |
-| `HOST` | `0.0.0.0` | Public interface binding |
-| `PORT` | `8000` | Public service port |
-| `COMFY_MEMORY_CAP_GIB` | `10.0` | PyTorch caching allocator ceiling |
-| `MODEL_DIR` | `/models` | Path to persistent models volume |
-| `DATA_DIR` | `/data` | Path to temporary output volume |
-| `SAFETY_ENABLED` | `1` | Enable inline v7 DistilBERT safety filter (Set to `0` for bypass; **WARNING:** Disables all child-safety guarantees, intended for development only) |
-| `SAFETY_DEVICE` | `cuda:0` | PyTorch device for safety classifier |
-| `SAFETY_MODEL_PATH` | `/models/safety/v7_distilbert` | Local path to safety classifier weights |
-| `HF_TOKEN` | *empty* | Optional Hugging Face token |
-
----
+| --- | --- | --- |
+| `HOST` / `PORT` | `0.0.0.0` / `8000` | Public service binding |
+| `JUNIOR_IMAGE_STACK` | `auto` | `blackwell_nvfp4`, `ampere_fp8`, or auto-detect from the GPU |
+| `COMFY_MEMORY_CAP_GIB` | per-stack | PyTorch allocator ceiling; 0 disables. Defaults: 10.0 (nvfp4), none (ampere_fp8) |
+| `MODEL_DIR` / `DATA_DIR` | `/models` / `/data` | Persistent models and runtime data volumes |
+| `SAFETY_DEVICE` | `cuda:0` | Device for the FP16 safety classifier |
+| `SAFETY_MODEL_PATH` | `/models/safety/v29db` | Pinned v29db artifact directory (digest-verified) |
+| `LID176_PATH` | `/models/safety/lid.176.bin` | fastText language-identification model |
+| `JUNIOR_EVALUATION_INSTANCE` | `0` | Owner-operated unfiltered measurement mode (see above) |
+| `HF_TOKEN` | empty | Optional Hugging Face token |
 
 ## Technical Details
 
-For detailed benchmark logs, memory fences, and NVFP4 kernel execution receipts, see [`docs/QUALIFIED_STACK.md`](docs/QUALIFIED_STACK.md).
+Qualification records with benchmark receipts, memory measurements and safety-test results:
 
-## License & Attributions
+- `docs/QUALIFIED_STACK.md` - Blackwell SM120 / NVFP4 qualification (historical, preserved)
+- `docs/RTX3060_QUALIFICATION.md` - RTX 3060 12 GB / Ampere fp8 requalification (v29db FP16 parity, gates, appliance behaviour)
 
-ComfyUI Junior is licensed under the [MIT License](LICENSE). Third-party dependencies (ComfyUI GPL-3.0, PyTorch, comfy-kitchen, model weights) retain their own licenses as documented in [`THIRD_PARTY.md`](THIRD_PARTY.md).
+## License and Attributions
+
+ComfyUI Junior is licensed under the MIT License. Third-party dependencies and model assets retain their own licenses as documented in [THIRD_PARTY.md](THIRD_PARTY.md).
